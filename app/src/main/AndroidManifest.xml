@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- WifiLock during a download — with the screen off, Wi-Fi going to sleep stalled it -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- BgGuard Step-1: battery-exemption dialog (ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+         is a silent no-op WITHOUT this permission — the dialog simply never opens (caught on a
+         TECNO CLA5). Downloads here are user-initiated = Play acceptable use. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- For gallery saves on Android 8/9 (API<29) — 10+ uses MediaStore and needs no permission -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <application
+        android:name=".XniperApp"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.XniperDownloader">
+
+        <!-- AdMob App ID — REAL (Riplox IG, account pub-8029174313177489). Ads.kt = 2 unit IDs. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-8029174313177489~7010524226" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.XniperDownloader"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".QuickDownloadActivity"
+            android:exported="true"
+            android:label="@string/quick_label"
+            android:theme="@style/Theme.XniperDownloader.Transparent"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!-- Connect Instagram — in-app WebView login; the saved cookies unlock private posts
+             and stories, and never leave the phone -->
+        <activity
+            android:name=".CookieLoginActivity"
+            android:exported="false"
+            android:label="Connect Instagram"
+            android:theme="@style/Theme.XniperDownloader"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- The "Copy link" action on the failure notification -->
+        <receiver
+            android:name=".CopyLinkReceiver"
+            android:exported="false" />
+
+        <!-- AIRLOCK v3 Escort — a tiny FGS that protects a new download until it holds its
+             own FGS lock (covering the gap after the door closes) -->
+        <service
+            android:name=".EscortService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Pin WorkManager's foreground-service type (required on Android 14+) -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+    </application>
+
+</manifest>

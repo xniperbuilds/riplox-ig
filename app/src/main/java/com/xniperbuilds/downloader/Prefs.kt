@@ -1,0 +1,37 @@
+package com.xniperbuilds.downloader
+
+import android.content.Context
+
+/** Chhoti settings (SharedPreferences) — Riplox IG ki zaroori cheezen. */
+object Prefs {
+    private fun sp(c: Context) = c.getSharedPreferences("riploxig_prefs", Context.MODE_PRIVATE)
+
+    /** Video quality: "best" | "1080" | "720" | "480". Default 1080p. */
+    fun quality(c: Context): String = sp(c).getString("quality", "1080") ?: "1080"
+    fun setQuality(c: Context, v: String) = sp(c).edit().putString("quality", v).apply()
+
+    /** true = MP3 (audio-only) — home chip + share tile dono isi se chalte hain. */
+    fun audioMode(c: Context) = sp(c).getBoolean("audioMode", false)
+    fun setAudioMode(c: Context, v: Boolean) = sp(c).edit().putBoolean("audioMode", v).apply()
+
+    /** Engine last auto-update kis din hua (yyyyMMdd) — din me ek dafa update. */
+    fun lastUpdateDay(c: Context): String = sp(c).getString("lastUpdateDay", "") ?: ""
+    fun setLastUpdateDay(c: Context, v: String) = sp(c).edit().putString("lastUpdateDay", v).apply()
+
+    /** Clipboard se aakhri auto-fill link (same link dobara suggest na ho). */
+    fun lastClip(c: Context): String = sp(c).getString("lastClip", "") ?: ""
+    fun setLastClip(c: Context, v: String) = sp(c).edit().putString("lastClip", v).apply()
+
+    /** Has the user finished the background-setup guide (battery + auto-start + recents-lock)?
+     * XOS-style phones still freeze downloads without auto-start EVEN AFTER a battery
+     * exemption, so the banner is independent of that exemption and keeps showing until
+     * this flag is set. */
+    fun bgSetupDone(c: Context) = sp(c).getBoolean("bgSetupDone", false)
+    fun setBgSetupDone(c: Context, v: Boolean) = sp(c).edit().putBoolean("bgSetupDone", v).apply()
+
+    /** Master switch for the connected account (cookies). Default ON — Instagram blocks a lot
+     * of content without a login (private posts, stories, sometimes reels). Cookies are only
+     * ever sent if some have been saved. */
+    fun cookiesEnabled(c: Context) = sp(c).getBoolean("cookiesEnabled", true)
+    fun setCookiesEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("cookiesEnabled", v).apply()
+}

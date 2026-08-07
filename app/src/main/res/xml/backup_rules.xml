@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+   Backup rules for Android 11 and below (before API 31).
+   Riplox IG: download history and small settings may be backed up, BUT Instagram login
+   cookies (the session token) must NEVER leave the device in a cloud backup
+   (privacy/security). The temp cache of an in-flight download is excluded too.
+-->
+<full-backup-content>
+    <exclude domain="file" path="cookies.txt" />
+    <exclude domain="external" path="temp" />
+</full-backup-content>
