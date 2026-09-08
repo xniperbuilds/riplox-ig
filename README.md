@@ -42,6 +42,9 @@ Paste a link or share from the Instagram app — reels, video posts, stories and
 - 📁 **Straight to your gallery** — video in `Movies/RiploxIG`, audio in `Music/RiploxIG`
 - 🎨 **Clean AMOLED-black UI** — Material 3, one calm screen, no clutter
 
+- 🔥 **Daily check-in streak** — tap **Check in** each day and accent colours unlock at 3, 7, 14 and 30 days; a 7-day streak pays a **whole ad-free day**
+- 🎁 **Two hours with no ads** — watch one short ad and the app goes quiet, banner and full screen both. Watch again to add more, up to a day. Nothing that was free has moved behind it
+
 ## What does *not* work yet
 
 Being straight about it, so nobody downloads this expecting the wrong thing:

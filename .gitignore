@@ -23,3 +23,6 @@ build/
 /launch-pack/
 /Play Launch Pack/
 _build_log.txt
+
+# ripple's local working state (surfaces are re-discoverable; status is never committed)
+.ripple/
