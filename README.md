@@ -28,11 +28,14 @@ Paste a link or share from the Instagram app — reels, video posts, stories and
 ## Features
 
 - ⬇️ **Reels, video posts & IGTV** — paste an Instagram link, or share one straight from the app
-- 🎠 **Carousels** — a multi-item post downloads every video it contains, in one go
+- 🖼️ **Photos too** — single photo posts and the picture slides in a carousel, straight to `Pictures/RiploxIG`
+- 🎠 **Carousels** — a multi-item post downloads every item it contains, video and photo, in one go
+- 🚪 **Two ways in** — Riplox IG asks Instagram directly first and falls back to the yt-dlp engine, so one of them going down does not take the app with it
 - 📖 **Stories** — from an account you can already see
 - 🎚️ **Pick your quality** — Best / 1080p / 720p / 480p, or extract **MP3** audio. Your choice is remembered
 - 🔑 **Connect Instagram (optional)** — sign in once for private posts and stories. You sign in on Instagram's own page; the app never sees your password
-- ⚡ **Zero-tap share** — share from Instagram and the download just starts
+- ⚡ **Share from Instagram** — the download starts on its own, and a small sheet shows the thumbnail, live progress and a Cancel button. Dismiss it and the download keeps going in the background
+- 🔧 **Update & retry** — when a share fails you get the real reason plus a one-tap engine refresh, without opening the app
 - 🔔 **Live notification** — real progress, cancel anytime; downloads survive app-close & reboot with auto-retry
 - ♻️ **Failed? One tap** — every failure gives you **Copy link** and **Retry**, right where you are
 - 🕘 **Recent list** — tap to play, copy link, download again, or delete
@@ -43,7 +46,10 @@ Paste a link or share from the Instagram app — reels, video posts, stories and
 
 Being straight about it, so nobody downloads this expecting the wrong thing:
 
-- **Photo-only posts.** The download engine does not expose Instagram's still images as a downloadable format, so a post with no video in it fails with a clear "photo post — videos and reels for now" message rather than a raw error. Mixed carousels still save the videos they contain. A dedicated image extractor is planned.
+- **Posts your account cannot already see.** Riplox IG can only reach what you can reach. A private account you do not follow, or an age-restricted post your account is not cleared for, will refuse — and it says so plainly instead of showing a raw error.
+- **Whole profiles in one go.** One post, reel or story at a time, on purpose.
+
+> **Photo posts now work** (since v1.1.0) — single photos and the picture slides in a mixed carousel save to `Pictures/RiploxIG`.
 
 ## Install
 

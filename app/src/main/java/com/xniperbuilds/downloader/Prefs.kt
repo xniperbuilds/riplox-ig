@@ -14,9 +14,17 @@ object Prefs {
     fun audioMode(c: Context) = sp(c).getBoolean("audioMode", false)
     fun setAudioMode(c: Context, v: Boolean) = sp(c).edit().putBoolean("audioMode", v).apply()
 
-    /** Engine last auto-update kis din hua (yyyyMMdd) — din me ek dafa update. */
+    /** Engine last auto-update kis din hua (yyyyMMdd) — din me ek dafa update.
+     * ⚠️ Sirf KAMYAB update pe likha jata hai, warna nakaam koshish "aaj ho chuka" ban jati. */
     fun lastUpdateDay(c: Context): String = sp(c).getString("lastUpdateDay", "") ?: ""
     fun setLastUpdateDay(c: Context, v: String) = sp(c).edit().putString("lastUpdateDay", v).apply()
+
+    /** Engine ke aakhri update ka NATIJA + version — pehle ye `catch {}` me kho jata tha, aur
+     * hamesha nakaam hone wala update bilkul kamyab jaisa dikhta tha. */
+    fun engineOutcome(c: Context): String = sp(c).getString("engineOutcome", "") ?: ""
+    fun engineVersion(c: Context): String = sp(c).getString("engineVersion", "") ?: ""
+    fun setEngineResult(c: Context, outcome: String, version: String) =
+        sp(c).edit().putString("engineOutcome", outcome).putString("engineVersion", version).apply()
 
     /** Clipboard se aakhri auto-fill link (same link dobara suggest na ho). */
     fun lastClip(c: Context): String = sp(c).getString("lastClip", "") ?: ""
@@ -29,9 +37,51 @@ object Prefs {
     fun bgSetupDone(c: Context) = sp(c).getBoolean("bgSetupDone", false)
     fun setBgSetupDone(c: Context, v: Boolean) = sp(c).edit().putBoolean("bgSetupDone", v).apply()
 
+    /** Has Instagram REJECTED the saved session? (Route 0 got a 302 to /accounts/login/.)
+     * ⚠️ This is the only unambiguous expiry signal the app has — yt-dlp's errors have to be
+     * string-matched and guessed at. Without it a user whose login had quietly expired had to
+     * work that out for themselves and switch the login off by hand. Cleared automatically the
+     * next time the session is accepted, and on a fresh Re-login. */
+    fun sessionExpired(c: Context) = sp(c).getBoolean("sessionExpired", false)
+    fun setSessionExpired(c: Context, v: Boolean) = sp(c).edit().putBoolean("sessionExpired", v).apply()
+
     /** Master switch for the connected account (cookies). Default ON — Instagram blocks a lot
      * of content without a login (private posts, stories, sometimes reels). Cookies are only
      * ever sent if some have been saved. */
     fun cookiesEnabled(c: Context) = sp(c).getBoolean("cookiesEnabled", true)
     fun setCookiesEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("cookiesEnabled", v).apply()
+
+    // ---- Daily streak, unlocked accents and the ad-free window (see Streak.kt) ----
+
+    /** Day of the last check-in, `yyyy-MM-dd` in the device's own timezone. "" = never. */
+    fun lastCheckIn(c: Context): String = sp(c).getString("lastCheckIn", "") ?: ""
+    fun streakDays(c: Context) = sp(c).getInt("streakDays", 0)
+    fun bestStreak(c: Context) = sp(c).getInt("bestStreak", 0)
+
+    /** Written together so a crash between them cannot leave the day and count disagreeing. */
+    fun setCheckIn(c: Context, day: String, streak: Int, best: Int) =
+        sp(c).edit()
+            .putString("lastCheckIn", day)
+            .putInt("streakDays", streak)
+            .putInt("bestStreak", best)
+            .apply()
+
+    /** Epoch millis until which no ads are shown. 0 = none. */
+    fun adFreeUntil(c: Context) = sp(c).getLong("adFreeUntil", 0L)
+    fun setAdFreeUntil(c: Context, v: Long) = sp(c).edit().putLong("adFreeUntil", v).apply()
+
+    /** Accents bought with a rewarded ad rather than earned by streak (milestone ints). */
+    fun boughtAccents(c: Context): Set<Int> =
+        (sp(c).getStringSet("boughtAccents", emptySet()) ?: emptySet())
+            .mapNotNull { it.toIntOrNull() }.toSet()
+
+    fun addBoughtAccent(c: Context, milestone: Int) =
+        sp(c).edit().putStringSet(
+            "boughtAccents",
+            boughtAccents(c).plus(milestone).map { it.toString() }.toSet()
+        ).apply()
+
+    /** The accent the user is actually using. 0 = the default Riplox look. */
+    fun accent(c: Context) = sp(c).getInt("accent", 0)
+    fun setAccent(c: Context, v: Int) = sp(c).edit().putInt("accent", v).apply()
 }

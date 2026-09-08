@@ -34,6 +34,17 @@ fun isInstagramUrl(url: String?): Boolean {
 data class Preview(val title: String, val uploader: String, val thumbnail: String?, val duration: Long)
 
 fun getPreview(context: Context, link: String): Preview {
+    // Route 0 first — and it costs nothing, because the download itself is about to want the
+    // same JSON and the extractor caches it. Before this, the preview spawned a SECOND yt-dlp
+    // process alongside the download purely to fetch a title and a thumbnail, on a post the
+    // app was already fetching.
+    try {
+        InstagramExtractor.fetch(context, link)?.let {
+            return Preview(it.title, it.user, it.thumb, 0L)
+        }
+    } catch (e: Exception) {
+        Log.w("RiploxIG", "route0 preview failed — using the engine: ${e.message}")
+    }
     val req = YoutubeDLRequest(link)
     req.addOption("--no-playlist")
     req.addOption("--no-warnings")
@@ -201,6 +212,9 @@ fun saveCookiesFromWebView(context: Context, groups: List<Pair<String, List<Stri
     kept.forEach { sb.append(it).append("\n") }
     fresh.forEach { sb.append(it).append("\n") }
     cookiesFile(context).writeText(sb.toString())
+    // A fresh login clears the "expired" warning — otherwise the home screen would keep
+    // telling the user to re-login after they just did.
+    if (fresh.isNotEmpty()) Prefs.setSessionExpired(context, false)
     return fresh.size
 }
 
@@ -239,8 +253,13 @@ fun looksLikeSessionFailure(raw: String?): Boolean {
 fun friendlyError(raw: String?): String {
     val m = (raw ?: "").lowercase()
     return when {
+        // ⚠️ This used to read "photo support is coming soon". Photos ARE supported now
+        // (InstagramExtractor), so reaching this message means the direct route could not open
+        // the post either — which is almost always a login/visibility problem, not the media
+        // type. Saying "photos aren't supported" here would send the user to fix the one thing
+        // that is not broken.
         "no video formats" in m || "no video could be found" in m ->
-            "This looks like a photo post. Riplox IG saves Instagram videos, reels, video carousels & stories for now — photo support is coming soon."
+            "Couldn't open this post. If it's private or age-restricted, connect an Instagram account that can see it (Riplox IG → Connect Instagram) and retry."
         "failed to parse json" in m || "jsondecodeerror" in m ->
             "Instagram didn't return this post's data — it usually means it's rate-limiting right now. Wait a minute and retry."
         "instagram sent an empty media response" in m || "login required" in m ||
@@ -387,20 +406,45 @@ fun runDownload(
             }
         }
 
-        // Try with the login first (that is what makes private posts and stories work). If
-        // the session is rejected, retry ONCE without it — public reels, posts and carousels
-        // still come through that way.
-        val hadCookies = Prefs.cookiesEnabled(context) && hasCookies(context)
-        try {
-            execute(hadCookies)
+        // ── ROUTE 0 — Instagram's own API, direct (InstagramExtractor) ─────────────────────
+        // Tried first because it is both faster and independent of the engine: one HTTPS call
+        // instead of a Python process, and it keeps working on the day yt-dlp's Instagram
+        // extractor breaks. It is also the ONLY route that can save photos at all.
+        //
+        // Its contract is what makes it safe to put in front: it returns 0 on ANY disappointment
+        // and leaves `work` empty, so the engine below then runs exactly as it always has.
+        // Audio is not its job (MP3 needs ffmpeg), so MP3 mode skips it entirely.
+        // (No session? `fetch` returns null immediately without a request — see hasSession.)
+        val route0 = if (audioOnly) 0 else try {
+            InstagramExtractor.downloadInto(context, link, work, onBeat) { p ->
+                if (p > maxP) { maxP = p; onProgress(maxP) }
+            }
         } catch (e: Exception) {
-            if (!hadCookies || !looksLikeSessionFailure(e.message)) throw e
-            Log.w("RiploxIG", "session/cookie failure — retrying WITHOUT login", e)
-            // Drop the partial files, or the old .part ones collide with the new run.
+            Log.w("RiploxIG", "route0 threw — falling back to the engine", e)
+            0
+        }
+        if (route0 == 0) {
+            // Route 0 may have left partial files behind before giving up; clear them or they
+            // get collected below as if they were real downloads.
             work.listFiles()?.forEach { it.deleteRecursively() }
             maxP = 0
-            onBeat()
-            execute(false)
+
+            // ── ROUTE 1 — the engine ───────────────────────────────────────────────────────
+            // Try with the login first (that is what makes private posts and stories work). If
+            // the session is rejected, retry ONCE without it — public reels, posts and carousels
+            // still come through that way.
+            val hadCookies = Prefs.cookiesEnabled(context) && hasCookies(context)
+            try {
+                execute(hadCookies)
+            } catch (e: Exception) {
+                if (!hadCookies || !looksLikeSessionFailure(e.message)) throw e
+                Log.w("RiploxIG", "session/cookie failure — retrying WITHOUT login", e)
+                // Drop the partial files, or the old .part ones collide with the new run.
+                work.listFiles()?.forEach { it.deleteRecursively() }
+                maxP = 0
+                onBeat()
+                execute(false)
+            }
         }
 
         // Collect ALL downloaded files (a carousel gives several) — but not partial/temp ones

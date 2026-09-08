@@ -30,10 +30,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.XniperDownloader">
 
-        <!-- AdMob App ID — REAL (Riplox IG, account pub-8029174313177489). Ads.kt = 2 unit IDs. -->
+        <!-- AdMob App ID — supplied by the BUILD TYPE (release = the real Riplox IG id,
+             qa = Google's test id), the same way the two unit ids in Ads.kt are. It used to be
+             hard-coded here, which meant a QA build still carried the real app id. -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-8029174313177489~7010524226" />
+            android:value="${admobAppId}" />
 
         <activity
             android:name=".MainActivity"
@@ -49,13 +51,23 @@
             </intent-filter>
         </activity>
 
+        <!-- The share tile.
+             ⚠️ android:noHistory was REMOVED in v1.1.0: it finishes the activity the moment it
+             stops being visible, and this is now a real sheet that has to survive a full-screen
+             ad and the file/share chooser opening over it.
+             ⚠️ singleTop is the other half of that change. Without noHistory an instance stays
+             alive, and a second share is DELIVERED TO IT rather than starting a new one
+             ("Activity not started, intent has been delivered to currently running top-most
+             instance"). singleTop makes that explicit, and QuickDownloadActivity.onNewIntent
+             restarts the flow with the new link — without it the second share was dropped and
+             the sheet looked frozen. -->
         <activity
             android:name=".QuickDownloadActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:label="@string/quick_label"
             android:theme="@style/Theme.XniperDownloader.Transparent"
             android:excludeFromRecents="true"
-            android:noHistory="true"
             android:taskAffinity=""
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
             android:windowSoftInputMode="adjustResize">

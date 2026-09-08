@@ -23,10 +23,36 @@ android {
         // carousels + stories, connect-account (cookies), ads, AIRLOCK v3 reliability.
         // v1.0.1 = session-failure fallback (Instagram sometimes answers a logged-in request
         // with an empty body → it now retries once without the login) + a "Use my login" switch.
-        versionCode = 2
-        versionName = "1.0.1"
+        // v1.1.0 = the share tile stops being invisible. A user who only ever shares from
+        // Instagram now gets a sheet with a thumbnail, live progress, Cancel, and a real error
+        // with Retry / Update & retry — and, because that sheet is a visible screen, the first
+        // ad impressions that flow has ever produced. Plus: one Engine (the share-only user's
+        // yt-dlp was never refreshed), a manual "Update engine now", and a Google consent form
+        // for EEA/UK/Swiss users so their traffic can serve personalised ads at all.
+        // v1.2.0 = the interstitial actually gets SHOWN, and a reason to come back.
+        //   · AdMob measured 18 matched interstitials and ZERO impressions (0% every single day) across 1-7 Sep 2026. Every one of
+        //     those was fetched on app open or share open, while a show needs a 2nd completed
+        //     download plus a 60s gap — so it expired unseen. Fetching now happens exactly one
+        //     completion before a show slot (AdGate.kt), with a 50-minute staleness guard.
+        //   · Daily check-in streak: 2 hours ad-free per rewarded view (banner AND interstitial
+        //     both go quiet), a free ad-free day at a 7-day streak, and accent colours unlocked
+        //     at 3/7/14/30 days. Nothing that was free has been fenced off.
+        //   · Play In-App Updates: the "a new version is out" notice IG never had.
+        versionCode = 4
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // AdMob IDs come from the build type — Google's TEST ids on a QA build, the real ones
+        // on release. They used to be swapped BY HAND in three places, and clicking your own
+        // real ads gets an AdMob ban, so that mistake is no longer possible.
+        manifestPlaceholders["admobAppId"] = "ca-app-pub-8029174313177489~7010524226"
+        buildConfigField("String", "AD_BANNER_ID", "\"ca-app-pub-8029174313177489/4384360886\"")
+        buildConfigField("String", "AD_INTERSTITIAL_ID", "\"ca-app-pub-8029174313177489/9226603961\"")
+        // ⚠️ Rewarded unit for the ad-free window / accent unlocks. BLANK until the unit is
+        // created in the AdMob console; while blank the app hides every rewarded option
+        // rather than offering a reward it cannot deliver.
+        buildConfigField("String", "AD_REWARDED_ID", "\"ca-app-pub-8029174313177489/3795631504\"")
 
         ndk {
             // Launch: arm64 + 32-bit (so it still installs on older phones)
@@ -62,6 +88,25 @@ android {
             signingConfig = if (riploxKs != null) signingConfigs.getByName("release")
             else signingConfigs.getByName("debug")
         }
+        // QA build — identical to release, but with a DIFFERENT applicationId and Google's
+        // TEST ad ids.
+        // ⚠️ Why: the copy installed from Play (closed testing) is signed with the Play App
+        // Signing key, so a local APK sharing its applicationId fails with
+        // INSTALL_FAILED_UPDATE_INCOMPATIBLE. The `.qa` suffix lets the QA build sit alongside
+        // the Play one (nothing has to be uninstalled, so existing downloads and history stay
+        // safe). Test ad ids mean there is no way to click your own real ads (AdMob invalid
+        // traffic) — this is the ONLY build that may be installed on your own phone.
+        create("qa") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".qa"
+            versionNameSuffix = "-qa"
+            matchingFallbacks += listOf("release")
+            manifestPlaceholders["admobAppId"] = "ca-app-pub-3940256099942544~3347511713"
+            buildConfigField("String", "AD_BANNER_ID", "\"ca-app-pub-3940256099942544/6300978111\"")
+            buildConfigField("String", "AD_INTERSTITIAL_ID", "\"ca-app-pub-3940256099942544/1033173712\"")
+            // Google's public test rewarded unit
+            buildConfigField("String", "AD_REWARDED_ID", "\"ca-app-pub-3940256099942544/5224354917\"")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -69,6 +114,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -93,6 +139,19 @@ dependencies {
 
     // AdMob — bottom banner + interstitial (Ads.kt)
     implementation("com.google.android.gms:play-services-ads:24.4.0")
+
+    // Google User Messaging Platform — the consent form (Consent.kt).
+    // ⚠️ Not optional for revenue: since 16 Jan 2024 AdMob requires a Google-certified CMP to
+    // serve PERSONALISED ads in the EEA, the UK and Switzerland. Without one that traffic is
+    // eligible only for limited/non-personalised ads, which is where the eCPM collapses. It
+    // also does nothing at all outside those regions, so it costs other users nothing.
+    implementation("com.google.android.ump:user-messaging-platform:4.0.0")
+
+    // Play In-App Updates — the "a new version is out" notice (AppUpdates.kt).
+    // ⚠️ Only works on an app installed from Play. Sideload/GitHub builds run no update check
+    // at all: a Play-installed app may not fetch or install an APK itself (Device & Network
+    // Abuse policy), so there is deliberately no home-grown updater.
+    implementation("com.google.android.play:app-update:2.1.0")
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

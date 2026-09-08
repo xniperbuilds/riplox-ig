@@ -16,6 +16,38 @@ data class DownloadRecord(
     val time: Long
 )
 
+private val IMAGE_EXTS = setOf("jpg", "jpeg", "png", "webp", "heic")
+
+/**
+ * Is this saved item a PHOTO?
+ *
+ * ⚠️ The record only ever stored an `isAudio` flag, because before v1.1.0 a download could only
+ * be a video or an MP3. Now that photos save too, every `if (isAudio) … else video` in the app
+ * was quietly calling a photo a video — including the one that builds the intent to OPEN it, so
+ * tapping a saved photo asked Android for a video player and got nowhere.
+ *
+ * Worked out from the TITLE, not the location: the location is a MediaStore `content://` URI
+ * with no extension on it, while the title is the real filename.
+ */
+val DownloadRecord.isImage: Boolean
+    get() = title.substringAfterLast('.', "").lowercase() in IMAGE_EXTS
+
+/** "MP3" · "Photo" · "Video" — what a Recent row should actually say. */
+val DownloadRecord.kindLabel: String
+    get() = when {
+        isAudio -> "MP3"
+        isImage -> "Photo"
+        else -> "Video"
+    }
+
+/** The MIME to hand to a view/share intent. */
+val DownloadRecord.viewMime: String
+    get() = when {
+        isAudio -> "audio/*"
+        isImage -> "image/*"
+        else -> "video/*"
+    }
+
 /** Download history — simple JSON file (app internal storage). TT app me trash nahi — delete seedha. */
 object History {
     private const val HIST = "history.json"

@@ -163,7 +163,17 @@ class DownloadWorker(
                         title = pv.title
                         bmp = pv.thumbnail?.let { loadThumb(it) }
                         safeNotify(nm, progId, buildNotif("⬇ $title", "downloading…", true, bmp))
-                        setProgressAsync(workDataOf("title" to title, "fg" to fgLocked))
+                        // The thumb URL rides along so the share sheet can show the same
+                        // picture the notification does — it loads its own copy rather than
+                        // trying to pass a Bitmap through WorkManager's Data (which is capped
+                        // at 10 KB and would drop it).
+                        setProgressAsync(
+                            workDataOf(
+                                "title" to title,
+                                "thumb" to (pv.thumbnail ?: ""),
+                                "fg" to fgLocked
+                            )
+                        )
                     }
                 }
                 try {
@@ -261,23 +271,32 @@ class DownloadWorker(
             // On the first failure, update the engine on the NIGHTLY channel and let
             // WorkManager retry with the fresh one: a day-1 install heals itself, with no
             // visible failure for the user (the second attempt works).
-            val looksStale = runAttemptCount == 0 && listOf(
-                "no video formats", "unable to extract", "not available",
-                "confirm you are on the latest", "requested format", "no formats"
-            ).any { raw.contains(it, ignoreCase = true) }
-            // Still "no video formats" AFTER the nightly engine update (attempt>=1) means this
-            // really is a PHOTO post, not a stale engine → fast-fail with a clean message, no retry.
-            val definitelyPhoto = runAttemptCount >= 1 &&
+            // ⚠️ The match list lives in Engine.looksStale, NOT here. It used to be a second
+            // copy in this file, and a copy is exactly how a self-heal dies quietly: yt-dlp
+            // rewords an error, one list gets updated, the other does not.
+            // The `runAttemptCount == 0` gate is what keeps a photo post out of an endless
+            // retry loop — "no video formats" matches on every attempt, so without the gate it
+            // would update the engine and retry forever. Do not remove it.
+            val looksStale = runAttemptCount == 0 && Engine.looksStale(raw)
+            // Still "no video formats" AFTER the nightly engine update (attempt>=1), and the
+            // direct route (InstagramExtractor) could not open the post either — so more
+            // attempts will not help. Fast-fail with a clean message instead of burning the
+            // full backoff ladder.
+            // ⚠️ This used to be named after photo posts, which is no longer what it means:
+            // photos now come down the direct route. Reaching here says the post could not be
+            // OPENED at all — private, deleted, age-restricted, or a login that cannot see it.
+            val unopenable = runAttemptCount >= 1 &&
                 (raw.contains("no video formats", true) || raw.contains("no video could be found", true))
             if (looksStale) {
                 try {
-                    withContext(NonCancellable + Dispatchers.IO) {
-                        YoutubeDL.getInstance().updateYoutubeDL(ctx, YoutubeDL.UpdateChannel.NIGHTLY)
-                    }
+                    // Through Engine, so the outcome is RECORDED (About shows it) instead of
+                    // vanishing into a catch block — an update that fails every time used to
+                    // look identical to one that worked.
+                    withContext(NonCancellable) { Engine.update(ctx) }
                     Log.i("RiploxIG", "engine updated (nightly) after extractor fail — retrying")
                 } catch (ue: Exception) { Log.w("RiploxIG", "engine update failed", ue) }
                 Result.retry()
-            } else if (!definitelyPhoto && runAttemptCount < MAX_ATTEMPTS - 1) {
+            } else if (!unopenable && runAttemptCount < MAX_ATTEMPTS - 1) {
                 Result.retry()
             } else {
                 val msg = smartError(ctx, link, e.message)

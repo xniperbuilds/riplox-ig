@@ -55,6 +55,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -79,16 +80,9 @@ import androidx.work.WorkManager
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
-import com.google.android.gms.ads.MobileAds
 import com.xniperbuilds.downloader.ui.theme.SpaceGrotesk
-import com.yausername.youtubedl_android.YoutubeDL
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,11 +106,15 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // AdMob init (background thread — UI block na ho) + pehla interstitial preload
-        if (Ads.ENABLED) {
-            Thread { try { MobileAds.initialize(this) } catch (_: Exception) {} }.start()
-            Ads.preloadInterstitial(this)
-        }
+        // Consent form (EEA/UK/Switzerland only) → Ads SDK on a background thread → first
+        // interstitial preload. The order matters: an ad requested before the form is answered
+        // is one that can only serve non-personalised, and that is where the eCPM goes.
+        // Outside those regions no form appears and this is one cheap local check.
+        // ⚠️ No interstitial preload here. Riplox IG measured 18 matched interstitials and
+        // ZERO impressions across 1–7 Sep 2026 — a 0% show rate every single day — because a
+        // preload fired on app open while a show needs a 2nd completed download. The fetch now
+        // happens one completion before a show slot instead. See AdGate.
+        Consent.gather(this)
 
         setContent {
             com.xniperbuilds.downloader.ui.theme.XniperDownloaderTheme {
@@ -153,10 +151,17 @@ fun Home(activity: ComponentActivity) {
     // Instagram connect (cookies) status — private posts, stories and sometimes even public
     // reels are blocked without a login
     var igConnected by remember { mutableStateOf(instagramConnected(context)) }
+    // Re-read on resume too: the flag is written by the download worker, in another
+    // process-thread, while this screen is not looking.
+    var sessionExpired by remember { mutableStateOf(Prefs.sessionExpired(context)) }
     // "Use my login" — switching it off makes downloads run as a guest. Instagram sometimes
     // answers logged-in requests with an empty body (a soft-limited session), and guest mode
     // is what works then, so the user needs to hold that control.
     var useLogin by remember { mutableStateOf(Prefs.cookiesEnabled(context)) }
+
+    // The "a new version is out" notice — Play In-App Updates on a Play build only
+    // (details and the Play-policy reasoning are in AppUpdates.kt).
+    var updateNotice by remember { mutableStateOf<UpdateNotice?>(null) }
 
     // Recent thumbnails — a loader that pulls a frame out of the video file (coil-video)
     val videoLoader = remember {
@@ -210,7 +215,7 @@ fun Home(activity: ComponentActivity) {
     fun openRecord(r: DownloadRecord) {
         try {
             val i = Intent(Intent.ACTION_VIEW)
-                .setDataAndType(Uri.parse(r.location), if (r.isAudio) "audio/*" else "video/*")
+                .setDataAndType(Uri.parse(r.location), r.viewMime)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             context.startActivity(i)
         } catch (e: Exception) {
@@ -227,20 +232,13 @@ fun Home(activity: ComponentActivity) {
         }
     }
 
-    // Engine auto-update — once a day, and never while a download is running
+    // Engine auto-update — once a day, and never while a download is running.
+    // ⚠️ The logic lives in Engine now, not here. It used to be inline in this one screen,
+    // which is why a user who only ever used the Instagram share tile never got an engine
+    // update at all — and on Instagram a stale engine means nothing downloads.
     LaunchedEffect(Unit) {
         try {
-            val today = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-            if (Prefs.lastUpdateDay(context) != today) {
-                val busy = withContext(Dispatchers.IO) { DownloadQueue.hasActive(context) }
-                if (!busy) {
-                    withContext(Dispatchers.IO) {
-                        // NIGHTLY — Instagram extractor and image fixes land in yt-dlp nightly first
-                        YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
-                    }
-                    Prefs.setLastUpdateDay(context, today)
-                }
-            }
+            Engine.dailyIfDue(context)
         } catch (_: Exception) {
         }
     }
@@ -277,6 +275,7 @@ fun Home(activity: ComponentActivity) {
                 // Refresh status on the way back from Settings (banner follows the exemption)
                 bgRisk = !BgGuard.batteryExempt(context) || !Prefs.bgSetupDone(context)
                 igConnected = instagramConnected(context)
+                sessionExpired = Prefs.sessionExpired(context)
                 // Nudge stale/stuck downloads — with the app open the escort FGS is allowed,
                 // so an ENQUEUED job runs immediately and the worker takes its own FGS lock
                 // (the cure for "it won't start even with the app open").
@@ -294,11 +293,53 @@ fun Home(activity: ComponentActivity) {
         }
     }
 
+    // Update notice — ONLY on a Play install (Play In-App Updates): a "Restart to finish"
+    // card once the FLEXIBLE download completes, or Google's full-screen IMMEDIATE screen
+    // when it is urgent. Sideload/GitHub builds run no update check. See AppUpdates.kt.
+    val updates = remember { AppUpdates(activity) }
+    DisposableEffect(Unit) {
+        updates.check { updateNotice = it }
+        onDispose { updates.dispose() }
+    }
+
+    // Rewarded is opt-in, so unlike the interstitial it IS fetched ahead of time: the button
+    // is only offered once an ad is in hand, and a user who taps must not wait on the network.
+    LaunchedEffect(Unit) { Ads.loadRewarded(context) }
+    // Bumped when a reward lands, so the banner slot re-evaluates Ads.suppressed().
+    var adsEpoch by remember { mutableStateOf(0) }
+
     Column(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         modifier = Modifier.fillMaxWidth().weight(1f),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp)
     ) {
+        // ---- Update notice (Play FLEXIBLE "restart to finish") ----
+        updateNotice?.let { n ->
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF14251F))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            n.title,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFFDDE4EF)
+                        )
+                        Text(n.body, fontSize = 12.sp, color = Color(0xFF9AA6B8))
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Button(onClick = n.onClick, modifier = Modifier.weight(1f)) { Text(n.cta) }
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(onClick = { updateNotice = null }) { Text("Later", fontSize = 13.sp) }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+        }
+
         item {
             // Riplox-style home header: ⓘ in the corner, logo + name CENTRED just below
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -322,6 +363,12 @@ fun Home(activity: ComponentActivity) {
             Spacer(Modifier.height(28.dp))
         }
 
+        // ---- Daily check-in: streak, ad-free window, accent unlocks (StreakCard.kt) ----
+        item {
+            StreakCard(activity) { adsEpoch++ }
+            Spacer(Modifier.height(14.dp))
+        }
+
         // ---- Connect Instagram (cookies) — login-gated content: private posts, stories, sometimes reels ----
         item {
             if (igConnected) {
@@ -334,14 +381,19 @@ fun Home(activity: ComponentActivity) {
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
+                            // ⚠️ An expired session used to be INVISIBLE: downloads just got
+                            // slower and photos stopped working, and the only way to find out
+                            // was to guess and switch the login off by hand. Instagram
+                            // redirecting us to its login page is an exact answer, so say it.
                             Text(
-                                "✓ Instagram connected",
-                                color = Color(0xFF7FD1A0),
+                                if (sessionExpired) "⚠ Instagram login expired" else "✓ Instagram connected",
+                                color = if (sessionExpired) Color(0xFFE0A050) else Color(0xFF7FD1A0),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                "🔒 Your login is safe — saved only on this phone",
+                                if (sessionExpired) "Tap Re-login — private posts, stories & photos need it"
+                                else "🔒 Your login is safe — saved only on this phone",
                                 color = Color(0xFF6E8B7C),
                                 fontSize = 10.5.sp
                             )
@@ -631,7 +683,7 @@ fun Home(activity: ComponentActivity) {
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        "${timeAgo(r.time)} · ${if (r.isAudio) "MP3" else "Video"}",
+                        "${timeAgo(r.time)} · ${r.kindLabel}",
                         color = Color(0xFF5B6E8C),
                         fontSize = 12.sp
                     )
@@ -660,7 +712,7 @@ fun Home(activity: ComponentActivity) {
             }
         }
     }
-        BannerAd()
+        key(adsEpoch) { BannerAd() }
     }
 
     // ---- Background-setup dialog (opens from both the banner and About) ----
@@ -713,6 +765,34 @@ fun Home(activity: ComponentActivity) {
                     fontSize = 13.sp
                 )
                 Spacer(Modifier.height(14.dp))
+
+                // ---- ENGINE STATUS + MANUAL UPDATE ----------------------------------------
+                // Until now the app had no manual update anywhere: a user whose downloads had
+                // quietly stopped working had literally nothing to press, and no way to see
+                // whether the engine was fresh or months old. On Instagram that is the single
+                // most common failure there is.
+                var engineLine by remember { mutableStateOf(Engine.statusLine(context)) }
+                var engineBusy by remember { mutableStateOf(false) }
+                Text(engineLine, color = Color(0xFF9AA6B8), fontSize = 13.sp)
+                TextButton(
+                    enabled = !engineBusy,
+                    onClick = {
+                        engineBusy = true
+                        scope.launch {
+                            val outcome = Engine.update(context)
+                            engineLine = Engine.statusLine(context)
+                            engineBusy = false
+                            toast(
+                                when (outcome) {
+                                    Engine.Outcome.UPDATED -> "Engine updated"
+                                    Engine.Outcome.ALREADY_LATEST -> "Already the latest engine"
+                                    Engine.Outcome.FAILED -> "Update failed — check your internet"
+                                }
+                            )
+                        }
+                    }
+                ) { Text(if (engineBusy) "Updating…" else "Update engine now") }
+
                 TextButton(onClick = {
                     val share = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(
                         Intent.EXTRA_TEXT,
