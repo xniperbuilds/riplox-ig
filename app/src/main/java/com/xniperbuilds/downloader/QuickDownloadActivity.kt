@@ -228,15 +228,22 @@ class QuickDownloadActivity : ComponentActivity() {
         // ever gets refreshed. On Instagram that is not upkeep, it is survival: there is no
         // hand-written extractor to fall back on, so a stale yt-dlp means every download fails
         // with "No video formats found".
-        // ⚠️ It runs once the download has LANDED, not at share time: dailyIfDue deliberately
-        // refuses to swap the engine while a job is active, and at share time we have just
-        // enqueued one — so calling it there would skip every single time.
+        // ⚠️ It runs once the download has SETTLED, not at share time: dailyIfDue refuses to
+        // swap the engine while a job is running, and at share time we have just enqueued one
+        // — so calling it there would skip every single time.
+        // ⚠️⚠️ FAILED COUNTS TOO, and that is the whole point. This used to fire on Saved
+        // alone, which made the app unfixable in the one case that needed fixing: a stale
+        // engine fails every download, a download that never succeeds never reaches Saved, so
+        // the update that would have repaired the engine never ran. Measured 10-Sep-2026 — a
+        // share-sheet user could stay broken forever. A failure is precisely when a fresh
+        // engine is worth fetching.
         LaunchedEffect(phase) {
-            if (phase == Phase.Saved) {
+            if (phase == Phase.Saved || phase == Phase.Failed) {
                 try {
                     Engine.dailyIfDue(applicationContext)
                 } catch (e: Exception) {
-                    // Never surfaced here: the download already succeeded, and this is upkeep.
+                    // Never surfaced here: this is upkeep, and the sheet has already said
+                    // whatever it had to say about the download itself.
                 }
             }
         }

@@ -38,8 +38,22 @@ android {
         //     both go quiet), a free ad-free day at a 7-day streak, and accent colours unlocked
         //     at 3/7/14/30 days. Nothing that was free has been fenced off.
         //   · Play In-App Updates: the "a new version is out" notice IG never had.
-        versionCode = 4
-        versionName = "1.2.0"
+        // v1.2.1 = downloading without a connected Instagram account works again.
+        //   · The engine reported a version it was not running. youtubedl-android decides
+        //     "already up to date" by comparing its own SharedPreferences marker with GitHub's
+        //     tag and never looks at the yt-dlp on disk — so once that marker was written
+        //     without the files landing, every check answered "nothing to do" forever and the
+        //     app stayed on the bundled 2025.11.12 while reporting 2026.08.30. That old
+        //     extractor has no logged-out code path at all, so every download without a
+        //     connected account failed. The version is now read by RUNNING yt-dlp, and a marker
+        //     caught lying is cleared so the update actually happens.
+        //   · Two ways the engine could never repair itself, both closed: the share sheet only
+        //     refreshed it after a download SUCCEEDED (a failing app could never reach that),
+        //     and a download parked on the retry backoff ladder counted as "busy".
+        //   · Errors tell the truth: "connect an account" is now shown only when the failure
+        //     actually says so, instead of for every failure on an Instagram link.
+        versionCode = 5
+        versionName = "1.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

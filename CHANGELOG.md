@@ -3,6 +3,16 @@
 All notable changes to Riplox IG are documented here.
 Versioning: **MAJOR.MINOR.PATCH** — new features bump MINOR, fixes bump PATCH.
 
+## [1.2.1] — 2026-09-10
+
+Downloading without a connected Instagram account works again — and the app can now tell when its own engine is lying about its version.
+
+### Fixed
+- **Downloads without a connected account work again.** Nothing downloaded unless you connected an Instagram account first, and the app blamed the missing account for it. The real cause was its download engine: it reported a recent version while actually running one from November 2025, and that older engine has no way of reading a post you are not logged in for. The version is now read by asking the engine itself rather than trusting a stored note, so an engine that has fallen behind is spotted and replaced.
+- **The engine could get stuck on an old version permanently.** Its update check compared a stored version note against the latest release without ever looking at what was installed. If that note was ever written while the files were not, every future check answered "nothing to do" — for good. A note that disagrees with the engine on disk is now discarded and the update repeated.
+- **The engine could never repair itself after a failure.** Two separate paths made this worse than it had to be: downloads started from Instagram's share sheet only refreshed the engine after one had *succeeded*, so an app failing every download could never reach the thing that would fix it; and a download waiting to be retried counted as "busy", which skipped the update as well. Both now do the opposite — a failure is exactly when a fresh engine is fetched.
+- **Errors say what actually went wrong.** Any failure on an Instagram link showed "Instagram blocks downloads without login" whenever no account was connected, whatever the real reason — a dead connection, a full phone, a broken engine. That advice now appears only when the failure really is about a missing login; everything else reports itself.
+
 ## [1.2.0] — 2026-09-08
 
 A reason to come back, two hours without ads, an update notice, and the full-screen ad that never showed at all.

@@ -282,13 +282,25 @@ fun friendlyError(raw: String?): String {
 }
 
 /**
- * Instagram-aware friendly error — when a download fails without a connected account, tell
- * the user the actual reason and the fix. Instagram blocks a lot of guest downloads, so this
- * points them at "Connect Instagram".
+ * Instagram-aware friendly error — when a download fails BECAUSE there is no connected
+ * account, tell the user that and the fix.
+ *
+ * ⚠️⚠️ THE LIE THIS FIXES (measured 10-Sep-2026). This used to return the "connect an account"
+ * line for EVERY failure on an Instagram link whenever no account was connected — without ever
+ * looking at `raw`. So a dead network, a full disk, a broken engine and a genuine login wall
+ * all showed the user the same sentence, and the real reason never reached the screen. It is
+ * also what made a stale-engine bug look deliberate: "you have blocked downloads without
+ * login". The advice is now given only when the error actually says the request was refused
+ * for want of a session; everything else gets its own message.
+ *
+ * `looksLikeSessionFailure` is reused rather than copied — one list, one place. A second copy
+ * is exactly how the worker's self-heal died quietly once before.
  */
 fun smartError(context: Context, link: String, raw: String?): String {
     val connected = try { connectedSites(context) } catch (e: Exception) { emptyList() }
-    return if (isInstagramUrl(link) && !connected.contains("Instagram")) {
+    return if (isInstagramUrl(link) && !connected.contains("Instagram") &&
+        looksLikeSessionFailure(raw)
+    ) {
         "Instagram blocks downloads without login.\nOpen Riplox IG → Connect Instagram (top of home) → retry. Your password never touches this app."
     } else {
         friendlyError(raw)

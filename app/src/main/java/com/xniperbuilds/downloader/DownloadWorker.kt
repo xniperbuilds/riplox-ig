@@ -493,15 +493,32 @@ object DownloadQueue {
         android.os.Handler(activity.mainLooper).postDelayed({ fire(false) }, timeoutMs)
     }
 
-    /** Is any background download RUNNING/PENDING? (guard for engine-update / temp-clear)
+    /** Is any background download RUNNING, or ENQUEUED and about to start?
+     * (guard for engine-update / temp-clear)
      * ⚠️ ENQUEUED COUNTS too — a pending job can go RUNNING in any given second, and with a
-     * RUNNING-only check the engine update / temp clear collided with it. */
-    fun hasActive(context: Context): Boolean = try {
+     * RUNNING-only check the engine update / temp clear collided with it.
+     * ⚠️ …but NOT one parked far down the retry BACKOFF ladder. A failed download stays
+     * ENQUEUED with its next attempt minutes away, and a stale engine is the very thing that
+     * makes downloads fail — so counting those skipped the engine update exactly when it was
+     * needed: fail → backoff → skip the update → fail again, forever. Measured 10-Sep-2026,
+     * six shared links all failing kept the queue permanently "active" and the daily check
+     * never ran once. Anything starting within `soonMs` still counts, so the original
+     * same-second collision stays impossible. */
+    fun hasActive(context: Context, soonMs: Long = 30_000L): Boolean = try {
+        val now = System.currentTimeMillis()
         WorkManager.getInstance(context.applicationContext)
             .getWorkInfosByTag(TAG).get()
             .any {
-                it.state == androidx.work.WorkInfo.State.RUNNING ||
-                    it.state == androidx.work.WorkInfo.State.ENQUEUED
+                when (it.state) {
+                    androidx.work.WorkInfo.State.RUNNING -> true
+                    androidx.work.WorkInfo.State.ENQUEUED -> {
+                        // Unknown or unscheduled (waiting on a constraint such as network) is
+                        // treated as imminent — the safe side of this test is "busy".
+                        val next = try { it.nextScheduleTimeMillis } catch (t: Throwable) { 0L }
+                        next <= 0L || next == Long.MAX_VALUE || next - now <= soonMs
+                    }
+                    else -> false
+                }
             }
     } catch (e: Exception) {
         false
