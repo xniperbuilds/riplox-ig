@@ -3,6 +3,20 @@
 All notable changes to Riplox IG are documented here.
 Versioning: **MAJOR.MINOR.PATCH** — new features bump MINOR, fixes bump PATCH.
 
+## [1.3.0] — 2026-10-20
+
+The share sheet stops crashing, shows you the post, and the app's own ads are rearranged around it.
+
+### Changed
+- **The share sheet shows the post, large.** On phones with room for it, sharing a reel or post to Riplox IG now opens a taller sheet with a big preview of what is being saved, above the progress and the buttons. Smaller screens and landscape keep the compact sheet.
+- **One ad on the share sheet, inside it.** The tall sheet carries a single medium-sized ad at its top, inside the panel, with a clear gap before the preview and the buttons — and the strip that used to sit under the buttons is gone there. The panel never changes height while it is open, so nothing moves under your finger.
+- **A short welcome screen when you open the app.** Opening Riplox IG can now show an ad on a brief splash before the home screen — at most once an hour, never on the first two opens, never on the share sheet, and never while your ad-free time is running.
+
+### Fixed
+- **The share sheet could crash the moment it opened.** On some phones, sharing a reel to Riplox IG closed the sheet with "Riplox IG has stopped" before it appeared — measured at 2 of 4 shares on a Huawei test phone, and 0 of 20 on the same phone after the fix. The download had usually been queued already, so it often finished anyway, which is why this went unnoticed. The privacy-form check and the sheet were both building the same part of the screen at the same moment, from two different threads; that part is now built once, before either needs it.
+- **A second share while the sheet was still open kept showing the first download** — measured: 30 seconds after the second link started downloading, the sheet still said "Download failed" for the first. The sheet now starts fresh for every link it receives.
+- **The banner's retry interval now really stops at 60 seconds.** It was meant to back off to a minute between attempts and stopped at 40 seconds instead.
+
 ## [1.2.1] — 2026-09-10
 
 Downloading without a connected Instagram account works again — and the app can now tell when its own engine is lying about its version.

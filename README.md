@@ -34,7 +34,7 @@ Paste a link or share from the Instagram app — reels, video posts, stories and
 - 📖 **Stories** — from an account you can already see
 - 🎚️ **Pick your quality** — Best / 1080p / 720p / 480p, or extract **MP3** audio. Your choice is remembered
 - 🔑 **Connect Instagram (optional)** — sign in once for private posts and stories. You sign in on Instagram's own page; the app never sees your password
-- ⚡ **Share from Instagram** — the download starts on its own, and a small sheet shows the thumbnail, live progress and a Cancel button. Dismiss it and the download keeps going in the background
+- ⚡ **Share from Instagram** — the download starts on its own, and a sheet shows the post, live progress and a Cancel button. Dismiss it and the download keeps going in the background
 - 🔧 **Update & retry** — when a share fails you get the real reason plus a one-tap engine refresh, without opening the app
 - 🔔 **Live notification** — real progress, cancel anytime; downloads survive app-close & reboot with auto-retry
 - ♻️ **Failed? One tap** — every failure gives you **Copy link** and **Retry**, right where you are
@@ -43,7 +43,7 @@ Paste a link or share from the Instagram app — reels, video posts, stories and
 - 🎨 **Clean AMOLED-black UI** — Material 3, one calm screen, no clutter
 
 - 🔥 **Daily check-in streak** — tap **Check in** each day and accent colours unlock at 3, 7, 14 and 30 days; a 7-day streak pays a **whole ad-free day**
-- 🎁 **Two hours with no ads** — watch one short ad and the app goes quiet, banner and full screen both. Watch again to add more, up to a day. Nothing that was free has moved behind it
+- 🎁 **Two hours with no ads** — watch one short ad and the app goes quiet: every ad, banner and full screen alike. Watch again to add more, up to a day. Nothing that was free has moved behind it
 
 ## What does *not* work yet
 
@@ -86,7 +86,7 @@ Instagram rate-limits requests from time to time. Tap **Retry** in a minute. If 
 Your gallery — `Movies/RiploxIG` for video, `Music/RiploxIG` for MP3, `Pictures/RiploxIG` for any images that do come through.
 
 **Is it safe?**
-It's open source — read the code. No analytics and no tracking of what you download. Being upfront: the released build **does include the AdMob SDK** (a banner, plus an interstitial after every second completed download).
+It's open source — read the code. No analytics and no tracking of what you download. Being upfront: the released build **does include the AdMob SDK** — a banner on the home screen, one ad on the share sheet, an interstitial after every second completed download, an ad on opening the app (at most once an hour, never on the first two opens), and an optional ad you can choose to watch for ad-free time.
 
 **Only Instagram?**
 Yes, by design. For TikTok see [Riplox TT](https://github.com/xniperbuilds/riplox-tt); for 1000+ other sites see [Riplox](https://github.com/xniperbuilds/riplox).

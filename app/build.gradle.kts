@@ -52,8 +52,22 @@ android {
         //     and a download parked on the retry backoff ladder counted as "busy".
         //   · Errors tell the truth: "connect an account" is now shown only when the failure
         //     actually says so, instead of for every failure on an Instagram link.
-        versionCode = 5
-        versionName = "1.2.1"
+        // v1.3.0 = the share sheet earns, and opening the app does too.
+        //   · Share sheet on a tall screen: a 300×250 box ad at the top of the panel, a large
+        //     preview of the post, and the small bottom strip retired (one ad per sheet). The box
+        //     sits INSIDE the panel — AdMob forbids an ad that floats "over a background that
+        //     covers app content", which is exactly what the dimmed Instagram behind it is. The
+        //     preview is what keeps the screen from carrying more ad than content.
+        //   · App open ad: a short splash on opening the app (or returning after 30s+ away), at
+        //     most one an hour, never on the first two opens, never on the share sheet.
+        //   · The ads SDK starts at once when an earlier session's consent already allows it,
+        //     instead of waiting for the consent refresh to come back over the network.
+        //   · Share-sheet crash fixed: UMP built the window decor on its own thread while the sheet
+        //     built it on the main thread ("Window couldn't find content container view") — 2 of 4
+        //     shares on a Huawei YAL-L21 before, 0 of 20 after. Riplox TT had this guard since 24 Sep.
+        //   · A second share into an open sheet now resets it instead of showing the first job.
+        versionCode = 6
+        versionName = "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -67,6 +81,11 @@ android {
         // created in the AdMob console; while blank the app hides every rewarded option
         // rather than offering a reward it cannot deliver.
         buildConfigField("String", "AD_REWARDED_ID", "\"ca-app-pub-8029174313177489/3795631504\"")
+        // v1.3.0 units (created 20 Oct 2026: banner "IG Sheet Box" + "IG App Open").
+        //   Box: blank would fall back to the banner unit (a banner unit serves any banner size).
+        //   App open: blank would switch the whole app-open flow OFF — no splash, no request.
+        buildConfigField("String", "AD_BOX_ID", "\"ca-app-pub-8029174313177489/2054381834\"")
+        buildConfigField("String", "AD_APP_OPEN_ID", "\"ca-app-pub-8029174313177489/6049467161\"")
 
         ndk {
             // Launch: arm64 + 32-bit (so it still installs on older phones)
@@ -120,6 +139,9 @@ android {
             buildConfigField("String", "AD_INTERSTITIAL_ID", "\"ca-app-pub-3940256099942544/1033173712\"")
             // Google's public test rewarded unit
             buildConfigField("String", "AD_REWARDED_ID", "\"ca-app-pub-3940256099942544/5224354917\"")
+            // Google's public test banner (serves the 300×250 box too) and test app-open units
+            buildConfigField("String", "AD_BOX_ID", "\"ca-app-pub-3940256099942544/6300978111\"")
+            buildConfigField("String", "AD_APP_OPEN_ID", "\"ca-app-pub-3940256099942544/9257395921\"")
         }
     }
     compileOptions {

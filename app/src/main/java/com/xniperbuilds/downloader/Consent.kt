@@ -71,12 +71,30 @@ object Consent {
      */
     fun gather(activity: Activity, onReady: () -> Unit = {}) {
         if (!Ads.ENABLED) return
+        // ⚠️ Install the window's decor HERE, on the main thread, before UMP gets the activity.
+        // requestConsentInfoUpdate() reaches activity.window.decorView from its own worker
+        // thread. If the decor does not exist yet, PhoneWindow.installDecor() runs on two threads
+        // at once — it is not thread-safe — and the caller's setContent() then dies with "Window
+        // couldn't find content container view".
+        // Measured on a Huawei YAL-L21 (Android 10), 20 Oct 2026, on the v1.2.1 build: 2 of 4
+        // shares crashed the share sheet in onCreate → setContent with exactly that error. Riplox
+        // TT has carried this guard since 24 Sep (3 of 10 cold starts crashed there); it was never
+        // ported here. Once the decor exists, getDecorView() on any thread just returns it. Both
+        // callers (MainActivity, QuickDownloadActivity) come through here.
+        @Suppress("UNUSED_EXPRESSION") activity.window.decorView
         val ci = try {
             info(activity)
         } catch (e: Exception) {
             Log.w(TAG, "UMP unavailable: ${e.message}")
             startAds(activity); onReady(); return
         }
+        // Consent from an EARLIER session already allows ads → start the SDK now, in parallel with
+        // the refresh below, instead of after its network round trip. This is the pattern in
+        // Google's own UMP sample ("attempts to load ads using consent obtained in the previous
+        // session"). It matters most on the share sheet, which lives a few seconds and used to
+        // spend part of them waiting on this call. A first-ever launch is unchanged: there
+        // canRequestAds() is still false here.
+        if (canRequestAds(activity)) startAds(activity)
         try {
             ci.requestConsentInfoUpdate(
                 activity,

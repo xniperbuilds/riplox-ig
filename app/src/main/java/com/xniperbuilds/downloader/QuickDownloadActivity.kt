@@ -3,6 +3,7 @@ package com.xniperbuilds.downloader
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,36 +12,51 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Observer
@@ -72,6 +88,28 @@ private val SheetText = Color(0xFFE8EEF5)
 private val SheetMuted = Color(0xFF7C8DA6)
 private val SheetLine = Color(0xFF1E2938)
 private val SheetTrack = Color(0xFF223046)
+
+/**
+ * The tall sheet's fixed, non-text height: 16 pad + 8 + box 250 + 25 separation + 12 + 4 + 16
+ * + progress 4 + 16 + buttons 48 + 4 + link row 36 + 16 pad = 455dp. Its text — caption 16 +
+ * title 24 + status 2×20 = 80sp — is added at run time in dp, so a larger system font is
+ * counted rather than overflowing. The preview then takes what is left, within
+ * [PREVIEW_MIN]..[PREVIEW_MAX].
+ *
+ * Measured against the real space between the system bars on the phone in hand — a screen
+ * that cannot fit the minimum keeps the compact sheet and its bottom strip. (A first cut asked
+ * for a flat 740dp and would have left a 360×780 phone — one of the commonest sizes — without
+ * the box at all.)
+ */
+private val TALL_FIXED = 455.dp
+private val TALL_TEXT = 80.sp
+
+/** Smallest preview worth having: below this the post is a sliver and the ad outweighs the page. */
+private val PREVIEW_MIN = 120.dp
+private val PREVIEW_MAX = 180.dp
+
+/** Room left above the panel, so there is still somewhere to tap to dismiss. */
+private val SCRIM_HEADROOM = 16.dp
 
 private enum class Phase { Preparing, Downloading, Saved, Failed }
 
@@ -162,6 +200,94 @@ class QuickDownloadActivity : ComponentActivity() {
 
     @Composable
     private fun Sheet(link: String, audio: Boolean, firstId: UUID) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val density = LocalDensity.current
+            val topInset = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
+            val bottomInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
+            val textHeight = with(density) { TALL_TEXT.toDp() }
+            // What the preview could have, if the rest of the tall panel goes in.
+            val previewRoom = maxHeight - topInset - bottomInset - TALL_FIXED - textHeight - SCRIM_HEADROOM
+            // The box goes in only where the whole tall panel fits — measured here, not assumed —
+            // and never inside the earned ad-free window: with no ad to show there is no reason
+            // to make the sheet taller.
+            val boxed = Ads.ENABLED &&
+                !Ads.suppressed(this@QuickDownloadActivity) &&
+                previewRoom >= PREVIEW_MIN
+            val previewHeight = previewRoom.coerceIn(PREVIEW_MIN, PREVIEW_MAX)
+            LaunchedEffect(boxed) {
+                Log.i(
+                    "RiploxIG.Sheet",
+                    "height=$maxHeight insets=$topInset/$bottomInset previewRoom=$previewRoom boxed=$boxed"
+                )
+            }
+
+            // Tapping outside dismisses. No ripple — this is a scrim, not a control.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { finish() }
+            )
+
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    // Never taller than the space under the status bar. If a large system font
+                    // pushes it past that, the panel scrolls instead of hiding its buttons.
+                    .heightIn(max = maxHeight - topInset)
+                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                    .background(SheetSurface)
+                    .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
+                    .padding(16.dp)
+            ) {
+                if (boxed) {
+                    // ---- THE BOX (v1.3.0) ------------------------------------------------------
+                    // Inside the panel, never above it. AdMob: "Ads should not float or hover over
+                    // app content. This includes placing the ad over a background that covers app
+                    // content" — and the dimmed Instagram behind this sheet is exactly that.
+                    // One ad per sheet: with the box in, the bottom strip below is left out, and the
+                    // large preview keeps the screen from carrying more ad than content.
+                    Column(
+                        Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .width(300.dp)
+                    ) {
+                        Text("Advertisement", color = SheetMuted, fontSize = 12.sp, lineHeight = 16.sp)
+                        Spacer(Modifier.height(8.dp))
+                        BoxAd(placeholder = SheetTrack)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Hairline()
+                    Spacer(Modifier.height(12.dp))
+                }
+
+                // ⚠️ KEYED ON THE SHARE. A second share arrives through onNewIntent → setContent,
+                // which REUSES this composition: without the key every `remember` below keeps the
+                // first share's job, so the sheet would go on showing the old download (and Cancel
+                // would cancel it) while the new one ran unseen. The box above sits outside the
+                // key on purpose — the ad already on screen stays where it is.
+                key(firstId) { SheetBody(link, audio, firstId, boxed, previewHeight) }
+
+                if (!boxed) {
+                    // ---- AD SEPARATION -------------------------------------------------------
+                    // AdMob's banner guidance is about accidental clicks from an ad sitting next to
+                    // something people tap. 24 + a hairline + 16 is that rule made physical.
+                    // Do not close this gap up.
+                    Spacer(Modifier.height(24.dp))
+                    Hairline()
+                    Spacer(Modifier.height(16.dp))
+                    BannerAd()
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun SheetBody(link: String, audio: Boolean, firstId: UUID, boxed: Boolean, previewHeight: Dp) {
         val scope = rememberCoroutineScope()
 
         var workId by remember { mutableStateOf(firstId) }
@@ -278,252 +404,327 @@ class QuickDownloadActivity : ComponentActivity() {
             }
         }
 
-        Box(Modifier.fillMaxSize()) {
-            // Tapping outside dismisses. No ripple — this is a scrim, not a control.
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { finish() }
+        val done = phase == Phase.Saved || phase == Phase.Failed
+        val headline = when (phase) {
+            Phase.Saved -> "Saved to gallery"
+            Phase.Failed -> "Download failed"
+            else -> title
+        }
+        val status = when (phase) {
+            // Says what is happening AND that waiting is the right thing to do. "Getting the
+            // video…" left people wondering whether it had actually started.
+            Phase.Preparing ->
+                if (queuedOnly) "Waiting for network — the download will start on its own"
+                else "Please wait — the download is starting…"
+            Phase.Downloading ->
+                if (pct >= 99) "Finishing — merging & saving…" else "$pct%"
+            // The post's title, not the file name — the record stores the saved filename, which
+            // reads like machine output on screen.
+            Phase.Saved ->
+                if (title != "Instagram video") title
+                else saved?.title?.takeIf { it.isNotBlank() } ?: "Done"
+            Phase.Failed -> failure.ifBlank { "Something went wrong" }
+        }
+
+        if (boxed) {
+            // Tall sheet: the post itself, large. This is publisher content, and it is what keeps
+            // a 300×250 ad from outweighing everything else on the screen. Not clickable — it
+            // sits just under the ad, and the Open button exists for that.
+            Preview(thumb, previewHeight)
+            Spacer(Modifier.height(12.dp))
+            // Both text blocks get an EXACT height (counted in TALL_TEXT), so the panel — and the
+            // ad at its top — never moves as the phase changes. minLines alone was not enough:
+            // measured on the YAL-L21, the bold 18sp "Download failed" stood ~4dp taller than the
+            // 16sp "Instagram video" before it, and the whole panel rose by that much on failure.
+            val density = LocalDensity.current
+            Text(
+                text = headline,
+                color = SheetText,
+                fontSize = if (done) 18.sp else 16.sp,
+                fontFamily = if (done) SpaceGrotesk else null,
+                fontWeight = if (done) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.height(with(density) { 24.sp.toDp() })
             )
-
-            Column(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-                    .background(SheetSurface)
-                    .navigationBarsPadding()
-                    .padding(16.dp)
-            ) {
-                val done = phase == Phase.Saved || phase == Phase.Failed
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (thumb != null) {
-                        AsyncImage(
-                            model = thumb,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(width = 56.dp, height = 72.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(SheetTrack)
-                        )
-                    } else {
-                        Box(
-                            Modifier
-                                .size(width = 56.dp, height = 72.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(SheetTrack)
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = when (phase) {
-                                Phase.Saved -> "Saved to gallery"
-                                Phase.Failed -> "Download failed"
-                                else -> title
-                            },
-                            color = SheetText,
-                            fontSize = if (done) 18.sp else 16.sp,
-                            fontFamily = if (done) SpaceGrotesk else null,
-                            fontWeight = if (done) FontWeight.Bold else FontWeight.Normal,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = when (phase) {
-                                // Says what is happening AND that waiting is the right thing to
-                                // do. "Getting the video…" left people wondering whether it had
-                                // actually started.
-                                Phase.Preparing ->
-                                    if (queuedOnly) "Waiting for network — the download will start on its own"
-                                    else "Please wait — the download is starting…"
-                                Phase.Downloading ->
-                                    if (pct >= 99) "Finishing — merging & saving…" else "$pct%"
-                                // The post's title, not the file name — the record stores the
-                                // saved filename, which reads like machine output on screen.
-                                Phase.Saved ->
-                                    if (title != "Instagram video") title
-                                    else saved?.title?.takeIf { it.isNotBlank() } ?: "Done"
-                                Phase.Failed -> failure.ifBlank { "Something went wrong" }
-                            },
-                            color = SheetMuted,
-                            fontSize = 14.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                if (!done) {
-                    Spacer(Modifier.height(16.dp))
-                    // Hand-drawn rather than LinearProgressIndicator: an exact 4dp pill, exact
-                    // colours, and no dependence on which Material3 progress API ships here.
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = status,
+                color = SheetMuted,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.height(with(density) { 40.sp.toDp() })
+            )
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (thumb != null) {
+                    AsyncImage(
+                        model = thumb,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(width = 56.dp, height = 72.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(SheetTrack)
+                    )
+                } else {
                     Box(
                         Modifier
-                            .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(50))
+                            .size(width = 56.dp, height = 72.dp)
+                            .clip(RoundedCornerShape(10.dp))
                             .background(SheetTrack)
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth(fraction = pct.coerceIn(0, 100) / 100f)
-                                .height(4.dp)
-                                .clip(RoundedCornerShape(50))
-                                .background(RiploxSteel)
-                        )
-                    }
+                    )
                 }
-
-                Spacer(Modifier.height(16.dp))
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    when (phase) {
-                        Phase.Preparing, Phase.Downloading -> {
-                            OutlinedButton(
-                                onClick = {
-                                    WorkManager.getInstance(applicationContext).cancelWorkById(workId)
-                                    finish()
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp),
-                                shape = RoundedCornerShape(50)
-                            ) { Text("Cancel", color = SheetText, fontSize = 16.sp) }
-
-                            OutlinedButton(
-                                onClick = { openApp() },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp),
-                                shape = RoundedCornerShape(50)
-                            ) { Text("Open app", color = SheetText, fontSize = 16.sp) }
-                        }
-
-                        Phase.Saved -> {
-                            // The accent goes on what the USER wants (open the video), never on
-                            // the button that happens to trigger an ad.
-                            Button(
-                                onClick = {
-                                    saved?.let { r ->
-                                        try {
-                                            startActivity(
-                                                Intent(Intent.ACTION_VIEW)
-                                                    .setDataAndType(
-                                                        Uri.parse(r.location),
-                                                        r.viewMime
-                                                    )
-                                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                            )
-                                        } catch (e: Exception) {
-                                            Toast.makeText(
-                                                this@QuickDownloadActivity,
-                                                "Can't open — file may be deleted",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                    }
-                                    finish()
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp),
-                                shape = RoundedCornerShape(50),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = RiploxSteel,
-                                    contentColor = RiploxInk
-                                )
-                            ) { Text("Open", fontSize = 16.sp) }
-
-                            OutlinedButton(
-                                onClick = {
-                                    saved?.let { r ->
-                                        try {
-                                            startActivity(
-                                                Intent.createChooser(
-                                                    Intent(Intent.ACTION_SEND)
-                                                        .setType(r.viewMime)
-                                                        .putExtra(Intent.EXTRA_STREAM, Uri.parse(r.location))
-                                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                                                    "Share"
-                                                )
-                                            )
-                                        } catch (e: Exception) {
-                                            Toast.makeText(
-                                                this@QuickDownloadActivity,
-                                                "Can't share this file",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                    }
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp),
-                                shape = RoundedCornerShape(50)
-                            ) { Text("Share", color = SheetText, fontSize = 16.sp) }
-                        }
-
-                        Phase.Failed -> {
-                            OutlinedButton(
-                                onClick = { if (!busy) retry(updateEngine = false) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp),
-                                shape = RoundedCornerShape(50)
-                            ) { Text("Retry", color = SheetText, fontSize = 16.sp) }
-
-                            // The one-tap answer for a non-technical user, who otherwise has no
-                            // way at all to refresh the engine — and on Instagram a stale engine
-                            // is the single most common reason a download fails.
-                            Button(
-                                onClick = { if (!busy) retry(updateEngine = true) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp),
-                                shape = RoundedCornerShape(50),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = RiploxSteel,
-                                    contentColor = RiploxInk
-                                )
-                            ) { Text(if (busy) "Updating…" else "Update & retry", fontSize = 16.sp) }
-                        }
-                    }
-                }
-
-                if (done) {
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = headline,
+                        color = SheetText,
+                        fontSize = if (done) 18.sp else 16.sp,
+                        fontFamily = if (done) SpaceGrotesk else null,
+                        fontWeight = if (done) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = status,
+                        color = SheetMuted,
+                        fontSize = 14.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        // The tall sheet keeps the progress row's space even once it is done (drawn invisible),
+        // for the same reason the status is two lines tall: a panel that changes height moves
+        // the ad at its top.
+        if (!done || boxed) {
+            Spacer(Modifier.height(16.dp))
+            // Hand-drawn rather than LinearProgressIndicator: an exact 4dp pill, exact
+            // colours, and no dependence on which Material3 progress API ships here.
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .alpha(if (done) 0f else 1f)
+                    .clip(RoundedCornerShape(50))
+                    .background(SheetTrack)
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(fraction = pct.coerceIn(0, 100) / 100f)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(RiploxSteel)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            when (phase) {
+                Phase.Preparing, Phase.Downloading -> {
+                    OutlinedButton(
+                        onClick = {
+                            WorkManager.getInstance(applicationContext).cancelWorkById(workId)
+                            finish()
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(50)
+                    ) { Text("Cancel", color = SheetText, fontSize = 16.sp) }
+
+                    OutlinedButton(
+                        onClick = { openApp() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(50)
+                    ) { Text("Open app", color = SheetText, fontSize = 16.sp) }
+                }
+
+                Phase.Saved -> {
+                    // The accent goes on what the USER wants (open the video), never on
+                    // the button that happens to trigger an ad.
+                    Button(
+                        onClick = {
+                            saved?.let { r ->
+                                try {
+                                    startActivity(
+                                        Intent(Intent.ACTION_VIEW)
+                                            .setDataAndType(
+                                                Uri.parse(r.location),
+                                                r.viewMime
+                                            )
+                                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    )
+                                } catch (e: Exception) {
+                                    Toast.makeText(
+                                        this@QuickDownloadActivity,
+                                        "Can't open — file may be deleted",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                            finish()
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = RiploxSteel,
+                            contentColor = RiploxInk
+                        )
+                    ) { Text("Open", fontSize = 16.sp) }
+
+                    OutlinedButton(
+                        onClick = {
+                            saved?.let { r ->
+                                try {
+                                    startActivity(
+                                        Intent.createChooser(
+                                            Intent(Intent.ACTION_SEND)
+                                                .setType(r.viewMime)
+                                                .putExtra(Intent.EXTRA_STREAM, Uri.parse(r.location))
+                                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                            "Share"
+                                        )
+                                    )
+                                } catch (e: Exception) {
+                                    Toast.makeText(
+                                        this@QuickDownloadActivity,
+                                        "Can't share this file",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(50)
+                    ) { Text("Share", color = SheetText, fontSize = 16.sp) }
+                }
+
+                Phase.Failed -> {
+                    OutlinedButton(
+                        onClick = { if (!busy) retry(updateEngine = false) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(50)
+                    ) { Text("Retry", color = SheetText, fontSize = 16.sp) }
+
+                    // The one-tap answer for a non-technical user, who otherwise has no
+                    // way at all to refresh the engine — and on Instagram a stale engine
+                    // is the single most common reason a download fails.
+                    Button(
+                        onClick = { if (!busy) retry(updateEngine = true) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = RiploxSteel,
+                            contentColor = RiploxInk
+                        )
+                    ) { Text(if (busy) "Updating…" else "Update & retry", fontSize = 16.sp) }
+                }
+            }
+        }
+
+        // The tall sheet reserves this row from the start (empty until the download settles);
+        // the compact one adds it when done, as it always has.
+        if (done || boxed) {
+            Spacer(Modifier.height(if (boxed) 4.dp else 8.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(if (boxed) 36.dp else 40.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (done) {
                     Text(
                         text = "Open Riplox IG",
                         color = SheetMuted,
                         fontSize = 14.sp,
+                        lineHeight = 20.sp,
                         modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
                             .clickable { openApp() }
                             .padding(8.dp)
                     )
                 }
-
-                // ---- AD SEPARATION -------------------------------------------------------
-                // AdMob's banner guidance is about accidental clicks from an ad sitting next to
-                // something people tap. 24 + a hairline + 16 is that rule made physical.
-                // Do not close this gap up.
-                Spacer(Modifier.height(24.dp))
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(SheetLine)
-                )
-                Spacer(Modifier.height(16.dp))
-                BannerAd()
             }
+        }
+    }
+}
+
+/** The thin rule between an ad and everything else on the sheet. */
+@Composable
+private fun Hairline() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(SheetLine)
+    )
+}
+
+/**
+ * The post, large — on the tall sheet only. A reel cover is 9:16 and a feed post 1:1 or 4:5,
+ * so a wide card cannot crop either without cutting the subject off: the whole cover is fitted
+ * in the middle, over a blurred, darkened copy of itself that fills the rest. (`blur` is a
+ * no-op before Android 12; the darkened copy alone still looks deliberate there.)
+ */
+@Composable
+private fun Preview(thumb: String?, height: Dp) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(height)
+            .clip(RoundedCornerShape(12.dp))
+            .background(SheetTrack)
+    ) {
+        if (thumb == null) {
+            // No cover yet — or none at all, when Instagram refuses the post without a login. A
+            // bare dark slab under an ad reads as a broken page; a quiet media glyph reads as
+            // "this is where the post goes".
+            Icon(
+                imageVector = Icons.Outlined.Image,
+                contentDescription = null,
+                tint = SheetMuted.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(32.dp)
+            )
+        } else {
+            AsyncImage(
+                model = thumb,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .matchParentSize()
+                    .blur(24.dp)
+            )
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(Color.Black.copy(alpha = 0.35f))
+            )
+            AsyncImage(
+                model = thumb,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.matchParentSize()
+            )
         }
     }
 }

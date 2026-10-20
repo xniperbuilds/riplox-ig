@@ -18,14 +18,16 @@ import zipfile
 AAB = sys.argv[1] if len(sys.argv) > 1 else ""
 
 # --- per-release settings: BUMP THESE ---------------------------------------
-VERSION = b"1.2.1"       # the versionName that MUST be in this bundle
-PREV_VERSION = b"1.2.0"  # the previous one, which must NOT be (stale-build guard)
+VERSION = b"1.3.0"       # the versionName that MUST be in this bundle
+PREV_VERSION = b"1.2.1"  # the previous one, which must NOT be (stale-build guard)
 
-# --- AdMob (record: .xniper-secrets\admob-riploxtt.txt) ---------------------
+# --- AdMob ids that a release build must carry --------------------------------
 REAL_APP = b"ca-app-pub-8029174313177489~7010524226"
 REAL_BANNER = b"ca-app-pub-8029174313177489/4384360886"
 REAL_INTER = b"ca-app-pub-8029174313177489/9226603961"
 REAL_REWARDED = b"ca-app-pub-8029174313177489/3795631504"
+REAL_BOX = b"ca-app-pub-8029174313177489/2054381834"       # "IG Sheet Box" (v1.3.0)
+REAL_APP_OPEN = b"ca-app-pub-8029174313177489/6049467161"  # "IG App Open" (v1.3.0)
 TEST_MARK = b"3940256099942544"  # Google's test-ad account - forbidden in a release build
 
 WANT_MANIFEST = [
@@ -46,6 +48,11 @@ WANT_DEX = [
     (b"InstagramExtractor", "Instagram extractor (Route 0)"),
     # NEW in v1.2.0 - IG never had an update notice before.
     (b"appupdate", "Play In-App Updates library (new in v1.2.0)"),
+    # NEW in v1.3.0. A blank id does not fail the build - it silently turns the box into the
+    # banner unit and the app-open flow OFF - so both are checked here, by value.
+    (REAL_BOX, "real sheet-box id (new in v1.3.0)"),
+    (REAL_APP_OPEN, "real app-open id (new in v1.3.0)"),
+    (b"Lcom/xniperbuilds/downloader/AppOpen;", "app-open flow (new in v1.3.0)"),
 ]
 
 # These strings must NOT be present in the bundle. Play's Device & Network Abuse policy:
