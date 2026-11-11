@@ -11,7 +11,10 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,16 +25,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
@@ -41,9 +51,9 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -63,13 +73,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
@@ -186,11 +207,30 @@ fun Home(activity: ComponentActivity, hideBanner: Boolean = false) {
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var url by remember { mutableStateOf("") }
-    var quality by remember { mutableStateOf(Prefs.quality(context)) }
     var audioMode by remember { mutableStateOf(Prefs.audioMode(context)) }
     var history by remember { mutableStateOf(History.all(context)) }
     var failed by remember { mutableStateOf(FailedStore.all(context)) }
+    // Live jobs for the Downloading list (toActive says why each job has its own memory).
+    var active by remember { mutableStateOf<List<ActiveDl>>(emptyList()) }
+    val activeMeta = remember { HashMap<java.util.UUID, ActiveMeta>() }
+    var showAllRecent by remember { mutableStateOf(false) }
+    // Which tab under the link box is open. It follows the work: a new job opens Downloading,
+    // and when the last one settles the list moves to where it went — Downloaded, or Failed.
+    var tab by remember { mutableStateOf(HomeTab.DONE) }
+    var lastActive by remember { mutableStateOf(0) }
+    var failedMark by remember { mutableStateOf(0) }
+    LaunchedEffect(active.size) {
+        if (active.size > lastActive) {
+            if (lastActive == 0) failedMark = failed.size
+            tab = HomeTab.ACTIVE
+        } else if (active.isEmpty() && lastActive > 0 && tab == HomeTab.ACTIVE) {
+            // FailedStore is written before the job reports FAILED, so the count is current here.
+            tab = if (failed.size > failedMark) HomeTab.FAILED else HomeTab.DONE
+        }
+        lastActive = active.size
+    }
     var showAbout by remember { mutableStateOf(false) }
+    var showIgSheet by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<DownloadRecord?>(null) }
     // XOS/hibernation-style killers: without a battery exemption, background/share
     // downloads freeze — and on XOS the exemption alone is NOT ENOUGH (auto-start and the
@@ -254,7 +294,7 @@ fun Home(activity: ComponentActivity, hideBanner: Boolean = false) {
                 DownloadQueue.awaitStart(activity, id) { started ->
                     Toast.makeText(
                         context,
-                        if (started) "⬇ Download started — progress in notification"
+                        if (started) "⬇ Download started"
                         else "⬇ Queued — starts as soon as network allows",
                         Toast.LENGTH_SHORT
                     ).show()
@@ -308,6 +348,7 @@ fun Home(activity: ComponentActivity, hideBanner: Boolean = false) {
         var primed = false
         val wmObs = Observer<List<WorkInfo>> { infos ->
             refresh()
+            active = toActive(infos, activeMeta)
             if (!primed) {
                 // The first emission is old completed downloads at app open — no ad for those
                 infos.forEach { if (it.state == WorkInfo.State.SUCCEEDED) seenDone.add(it.id) }
@@ -363,8 +404,29 @@ fun Home(activity: ComponentActivity, hideBanner: Boolean = false) {
     Column(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         modifier = Modifier.fillMaxWidth().weight(1f),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp)
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
     ) {
+        // ---- Top bar: the name small on the left, ⓘ on the right ----
+        // There used to be a big centred logo here. It pushed the link box half a screen down,
+        // and the link box is what every visit to this screen is for.
+        item {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Riplox IG",
+                    modifier = Modifier.weight(1f),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = SpaceGrotesk,
+                    letterSpacing = (-0.5).sp,
+                    color = Color(0xFFDDE4EF)
+                )
+                IconButton(onClick = { showAbout = true }) {
+                    Icon(Icons.Outlined.Info, contentDescription = "About", tint = Color(0xFF9AA6B8))
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+
         // ---- Update notice (Play FLEXIBLE "restart to finish") ----
         updateNotice?.let { n ->
             item {
@@ -392,209 +454,233 @@ fun Home(activity: ComponentActivity, hideBanner: Boolean = false) {
             }
         }
 
+        // ---- Link box, format, Download — one panel at the top ----
+        // Video is always Best quality (see Prefs.quality). The third button is the Instagram
+        // account, which used to be a whole card in the middle of the screen. Download only
+        // shows once there is a link to download.
         item {
-            // Riplox-style home header: ⓘ in the corner, logo + name CENTRED just below
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                IconButton(onClick = { showAbout = true }) {
-                    Icon(Icons.Outlined.Info, contentDescription = "About", tint = Color(0xFF9AA6B8))
-                }
-            }
-            Spacer(Modifier.height(22.dp))
-            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                RiploxTile(64)
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "Riplox IG",
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = SpaceGrotesk,
-                    letterSpacing = (-1).sp,
-                    color = Color(0xFFDDE4EF)
-                )
-            }
-            Spacer(Modifier.height(28.dp))
-        }
-
-        // ---- Daily check-in: streak, ad-free window, accent unlocks (StreakCard.kt) ----
-        item {
-            StreakCard(activity) { adsEpoch++ }
-            Spacer(Modifier.height(14.dp))
-        }
-
-        // ---- Connect Instagram (cookies) — login-gated content: private posts, stories, sometimes reels ----
-        item {
-            if (igConnected) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF10251A))
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            // ⚠️ An expired session used to be INVISIBLE: downloads just got
-                            // slower and photos stopped working, and the only way to find out
-                            // was to guess and switch the login off by hand. Instagram
-                            // redirecting us to its login page is an exact answer, so say it.
-                            Text(
-                                if (sessionExpired) "⚠ Instagram login expired" else "✓ Instagram connected",
-                                color = if (sessionExpired) Color(0xFFE0A050) else Color(0xFF7FD1A0),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                if (sessionExpired) "Tap Re-login — private posts, stories & photos need it"
-                                else "🔒 Your login is safe — saved only on this phone",
-                                color = Color(0xFF6E8B7C),
-                                fontSize = 10.5.sp
-                            )
-                        }
-                        // Re-login (expired session / account switch). Cookies are NOT deleted —
-                        // the login is durable; this only refreshes or switches it.
-                        TextButton(onClick = {
-                            try {
-                                context.startActivity(
-                                    Intent(context, CookieLoginActivity::class.java)
-                                        .putExtra("site", "instagram")
-                                        .putExtra("label", "Instagram")
-                                )
-                            } catch (_: Exception) {
-                            }
-                        }) { Text("Re-login", fontSize = 13.sp) }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Use my login for downloads",
-                                color = Color(0xFFB6C6D6),
-                                fontSize = 12.sp
-                            )
-                            Text(
-                                if (useLogin) "Needed for private posts & stories"
-                                else "Guest mode — public reels & posts only",
-                                color = Color(0xFF6E8B7C),
-                                fontSize = 10.5.sp
-                            )
-                        }
-                        Switch(
-                            checked = useLogin,
-                            onCheckedChange = {
-                                useLogin = it
-                                Prefs.setCookiesEnabled(context, it)
-                            }
-                        )
-                    }
-                }
-            } else {
-                Card(
+            val accent = Accent.current(context)
+            val panel = RoundedCornerShape(16.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(panel)
+                    .background(Brush.verticalGradient(listOf(Color(0xFF121A29), Color(0xFF0A0F18))))
+                    .border(1.dp, Color(0xFF1D283B), panel)
+                    .padding(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF141B29))
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text(
-                            "🔗 Connect Instagram",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFFDDE4EF)
-                        )
-                        Text(
-                            "Log in once to download private posts, stories & some reels.",
-                            fontSize = 12.sp,
-                            color = Color(0xFF9AA6B8)
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "🔒 100% safe: Riplox never sees or stores your password. You sign in on Instagram's own page, and your login stays only on this phone — never on any server.",
-                            fontSize = 11.sp,
-                            color = Color(0xFF8FA6C4)
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = {
+                    placeholder = { Text("Paste an Instagram link…", color = Color(0xFF5B6E8C)) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    trailingIcon = {
+                        if (url.isNotBlank()) {
+                            IconButton(onClick = { url = "" }) {
+                                Icon(Icons.Default.Close, "Clear", tint = Color(0xFF9AA6B8))
+                            }
+                        } else {
+                            IconButton(onClick = {
                                 try {
-                                    context.startActivity(
-                                        Intent(context, CookieLoginActivity::class.java)
-                                            .putExtra("site", "instagram")
-                                            .putExtra("label", "Instagram")
-                                    )
+                                    val cm = context.getSystemService(ClipboardManager::class.java)
+                                    val clip = cm?.primaryClip?.getItemAt(0)?.text?.toString()
+                                    val link = extractUrl(clip)
+                                    if (link != null) url = link else toast("Clipboard is empty")
                                 } catch (_: Exception) {
                                 }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Connect Instagram") }
+                            }) {
+                                Icon(Icons.Default.ContentPaste, "Paste", tint = Color(0xFF9AA6B8))
+                            }
+                        }
+                    }
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FormatOption(
+                        "Best quality", Icons.Default.HighQuality, selected = !audioMode, accent = accent,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        audioMode = false
+                        Prefs.setAudioMode(context, false)
+                    }
+                    FormatOption(
+                        "MP3", Icons.Default.MusicNote, selected = audioMode, accent = accent,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        audioMode = true
+                        Prefs.setAudioMode(context, true)
+                    }
+                    InstagramButton(connected = igConnected, expired = sessionExpired) { showIgSheet = true }
+                }
+                AnimatedVisibility(visible = url.isNotBlank()) {
+                    Column {
+                        Spacer(Modifier.height(10.dp))
+                        GradientButton(if (audioMode) "Download MP3" else "Download", verticalPadding = 13.dp) {
+                            startDownload()
+                        }
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
-        }
-
-        // ---- Link input ----
-        item {
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Paste an Instagram link…", color = Color(0xFF5B6E8C)) },
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                trailingIcon = {
-                    if (url.isNotBlank()) {
-                        IconButton(onClick = { url = "" }) {
-                            Icon(Icons.Default.Close, "Clear", tint = Color(0xFF9AA6B8))
-                        }
-                    } else {
-                        IconButton(onClick = {
-                            try {
-                                val cm = context.getSystemService(ClipboardManager::class.java)
-                                val clip = cm?.primaryClip?.getItemAt(0)?.text?.toString()
-                                val link = extractUrl(clip)
-                                if (link != null) url = link else toast("Clipboard is empty")
-                            } catch (_: Exception) {
-                            }
-                        }) {
-                            Icon(Icons.Default.ContentPaste, "Paste", tint = Color(0xFF9AA6B8))
-                        }
-                    }
-                }
-            )
             Spacer(Modifier.height(12.dp))
         }
 
-        // ---- Quality + MP3 chips ----
+        // ---- Tabs under the link box: Downloading · Downloaded · Failed ----
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf("best" to "Best", "1080" to "1080p", "720" to "720p", "480" to "480p").forEach { (v, label) ->
-                    FilterChip(
-                        selected = !audioMode && quality == v,
-                        enabled = !audioMode,
-                        onClick = {
-                            quality = v
-                            Prefs.setQuality(context, v)
-                        },
-                        label = { Text(label, fontSize = 13.sp) }
-                    )
+            HomeTabs(tab, active = active.size, done = history.size, failed = failed.size) { tab = it }
+            Spacer(Modifier.height(8.dp))
+        }
+        when (tab) {
+            HomeTab.ACTIVE -> {
+                if (active.isEmpty()) {
+                    item { EmptyNote("Nothing downloading right now.\nPaste a link above — or share from Instagram.") }
                 }
-                FilterChip(
-                    selected = audioMode,
-                    onClick = {
-                        audioMode = !audioMode
-                        Prefs.setAudioMode(context, audioMode)
-                    },
-                    label = { Text("MP3", fontSize = 13.sp) }
-                )
+                items(active, key = { "a${it.id}" }) { d ->
+                    ActiveRow(d) { WorkManager.getInstance(context).cancelWorkById(d.id) }
+                }
             }
-            Spacer(Modifier.height(14.dp))
+            HomeTab.DONE -> {
+                if (history.isEmpty()) {
+                    item { EmptyNote("Downloads appear here.\nShare from Instagram — or paste a link above.") }
+                }
+                items(if (showAllRecent) history else history.take(RECENT_PREVIEW), key = { it.id }) { r ->
+                    var menuOpen by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { openRecord(r) }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF10151F)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (r.isAudio) {
+                                Icon(Icons.Default.MusicNote, null, tint = Color(0xFF8CA0BE))
+                            } else {
+                                // Under the picture, not instead of it: some phones (a Huawei
+                                // Kirin, measured) cannot pull a frame out of Instagram's VP9
+                                // files at all, and the row used to show an empty dark square.
+                                Icon(
+                                    if (r.isImage) Icons.Default.Image else Icons.Default.Movie,
+                                    null,
+                                    tint = Color(0xFF5B6E8C),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                AsyncImage(
+                                    model = r.location,
+                                    imageLoader = videoLoader,
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                r.title,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                color = Color(0xFFDDE4EF),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "${timeAgo(r.time)} · ${r.kindLabel}",
+                                color = Color(0xFF5B6E8C),
+                                fontSize = 12.sp
+                            )
+                        }
+                        Box {
+                            IconButton(onClick = { menuOpen = true }) {
+                                Icon(Icons.Default.MoreVert, "Menu", tint = Color(0xFF9AA6B8))
+                            }
+                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                DropdownMenuItem(text = { Text("Copy link") }, onClick = {
+                                    menuOpen = false
+                                    copyLink(r.url)
+                                })
+                                DropdownMenuItem(text = { Text("Download again") }, onClick = {
+                                    menuOpen = false
+                                    val id = DownloadQueue.enqueue(context, r.url, r.isAudio)
+                                    DownloadQueue.awaitStart(activity, id) { }
+                                    toast("⬇ Downloading again…")
+                                })
+                                DropdownMenuItem(text = { Text("Delete") }, onClick = {
+                                    menuOpen = false
+                                    confirmDelete = r
+                                })
+                            }
+                        }
+                    }
+                }
+                // The newest few only, with "Show all": the cards under the tabs (Instagram
+                // login, background fix, streak) would otherwise sit below every download ever made.
+                if (history.size > RECENT_PREVIEW) {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            TextButton(onClick = { showAllRecent = !showAllRecent }) {
+                                Text(if (showAllRecent) "Show less" else "Show all ${history.size}", fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+            }
+            HomeTab.FAILED -> {
+                if (failed.isEmpty()) {
+                    item { EmptyNote("No failed downloads.") }
+                }
+                items(failed, key = { "f${it.id}" }) { f ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1A0E0E))
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    f.title.ifBlank { "IG post" },
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFFDDE4EF),
+                                    fontSize = 14.sp
+                                )
+                                IconButton(onClick = {
+                                    FailedStore.remove(context, f.id)
+                                    refresh()
+                                }) {
+                                    Icon(Icons.Default.Close, "Dismiss", tint = Color(0xFF9AA6B8))
+                                }
+                            }
+                            // The whole message: it says what to DO, and it was being cut off mid-sentence.
+                            Text(f.error, color = Color(0xFF9AA6B8), fontSize = 12.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                TextButton(onClick = { copyLink(f.link) }) { Text("Copy link") }
+                                TextButton(onClick = {
+                                    FailedStore.remove(context, f.id)
+                                    val id = DownloadQueue.enqueue(context, f.link, f.isAudio)
+                                    DownloadQueue.awaitStart(activity, id) { }
+                                    refresh()
+                                    toast("⬇ Retrying…")
+                                }) { Text("Retry") }
+                            }
+                        }
+                    }
+                }
+            }
         }
-
-        // ---- Download button ----
-        item {
-            GradientButton("Download") { startDownload() }
-            Spacer(Modifier.height(18.dp))
-        }
+        item { Spacer(Modifier.height(18.dp)) }
 
         // ---- Background-freeze guard (XOS/Infinix/Tecno and similar) ----
         // These phones FREEZE the app in the background, so share-tile downloads neither
@@ -627,146 +713,133 @@ fun Home(activity: ComponentActivity, hideBanner: Boolean = false) {
             }
         }
 
-        // ---- Failed downloads (Copy link + Retry — core requirement) ----
-        if (failed.isNotEmpty()) {
-            item {
-                Text(
-                    "Failed",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color(0xFFE57373)
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-            items(failed, key = { "f${it.id}" }) { f ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A0E0E))
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                f.title.ifBlank { "IG post" },
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFFDDE4EF),
-                                fontSize = 14.sp
-                            )
-                            IconButton(onClick = {
-                                FailedStore.remove(context, f.id)
-                                refresh()
-                            }) {
-                                Icon(Icons.Default.Close, "Dismiss", tint = Color(0xFF9AA6B8))
-                            }
-                        }
-                        Text(f.error, color = Color(0xFF9AA6B8), fontSize = 12.sp, maxLines = 3)
-                        Spacer(Modifier.height(6.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            TextButton(onClick = { copyLink(f.link) }) { Text("Copy link") }
-                            TextButton(onClick = {
-                                FailedStore.remove(context, f.id)
-                                val id = DownloadQueue.enqueue(context, f.link, f.isAudio)
-                                DownloadQueue.awaitStart(activity, id) { }
-                                refresh()
-                                toast("⬇ Retrying…")
-                            }) { Text("Retry") }
-                        }
-                    }
-                }
-            }
-            item { Spacer(Modifier.height(10.dp)) }
+        // ---- Daily check-in: streak, ad-free window, accent unlocks (StreakCard.kt) ----
+        item {
+            StreakCard(activity) { adsEpoch++ }
+            Spacer(Modifier.height(14.dp))
         }
 
-        // ---- Recent ----
-        item {
-            Text("Recent", style = MaterialTheme.typography.titleMedium, color = Color(0xFFDDE4EF))
-            Spacer(Modifier.height(8.dp))
-        }
-        if (history.isEmpty()) {
-            item {
-                Text(
-                    "Downloads appear here.\nShare from Instagram — or paste a link above.",
-                    color = Color(0xFF5B6E8C),
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(vertical = 18.dp)
-                )
-            }
-        }
-        items(history, key = { it.id }) { r ->
-            var menuOpen by remember { mutableStateOf(false) }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { openRecord(r) }
-                    .padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(58.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFF10151F)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (r.isAudio) {
-                        Icon(Icons.Default.MusicNote, null, tint = Color(0xFF8CA0BE))
-                    } else {
-                        AsyncImage(
-                            model = r.location,
-                            imageLoader = videoLoader,
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        r.title,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        color = Color(0xFFDDE4EF),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        "${timeAgo(r.time)} · ${r.kindLabel}",
-                        color = Color(0xFF5B6E8C),
-                        fontSize = 12.sp
-                    )
-                }
-                Box {
-                    IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Default.MoreVert, "Menu", tint = Color(0xFF9AA6B8))
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(text = { Text("Copy link") }, onClick = {
-                            menuOpen = false
-                            copyLink(r.url)
-                        })
-                        DropdownMenuItem(text = { Text("Download again") }, onClick = {
-                            menuOpen = false
-                            val id = DownloadQueue.enqueue(context, r.url, r.isAudio)
-                            DownloadQueue.awaitStart(activity, id) { }
-                            toast("⬇ Downloading again…")
-                        })
-                        DropdownMenuItem(text = { Text("Delete") }, onClick = {
-                            menuOpen = false
-                            confirmDelete = r
-                        })
-                    }
-                }
-            }
-        }
     }
         // Out of the composition while the app-open splash is up: Google forbids showing that ad
         // "on top of other ads (for example, content with banner ads)".
         if (!hideBanner) key(adsEpoch) { BannerAd() }
+    }
+
+    // ---- Instagram account sheet — the Instagram button next to Best quality / MP3 ----
+    // Connect, re-login after an expiry, and the "use my login" switch: the same controls the
+    // home card had, one tap away instead of taking a third of the screen.
+    if (showIgSheet) {
+        ModalBottomSheet(onDismissRequest = { showIgSheet = false }) {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 18.dp)
+                    .padding(bottom = 28.dp)
+            ) {
+                if (igConnected) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF10251A))
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                // ⚠️ An expired session used to be INVISIBLE: downloads just got
+                                // slower and photos stopped working, and the only way to find out
+                                // was to guess and switch the login off by hand. Instagram
+                                // redirecting us to its login page is an exact answer, so say it.
+                                Text(
+                                    if (sessionExpired) "⚠ Instagram login expired" else "✓ Instagram connected",
+                                    color = if (sessionExpired) Color(0xFFE0A050) else Color(0xFF7FD1A0),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    if (sessionExpired) "Tap Re-login — private posts, stories & photos need it"
+                                    else "🔒 Your login is safe — saved only on this phone",
+                                    color = Color(0xFF6E8B7C),
+                                    fontSize = 10.5.sp
+                                )
+                            }
+                            // Re-login (expired session / account switch). Cookies are NOT deleted —
+                            // the login is durable; this only refreshes or switches it.
+                            TextButton(onClick = {
+                                try {
+                                    context.startActivity(
+                                        Intent(context, CookieLoginActivity::class.java)
+                                            .putExtra("site", "instagram")
+                                            .putExtra("label", "Instagram")
+                                    )
+                                } catch (_: Exception) {
+                                }
+                            }) { Text("Re-login", fontSize = 13.sp) }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Use my login for downloads",
+                                    color = Color(0xFFB6C6D6),
+                                    fontSize = 12.sp
+                                )
+                                Text(
+                                    if (useLogin) "Needed for private posts & stories"
+                                    else "Guest mode — public reels & posts only",
+                                    color = Color(0xFF6E8B7C),
+                                    fontSize = 10.5.sp
+                                )
+                            }
+                            Switch(
+                                checked = useLogin,
+                                onCheckedChange = {
+                                    useLogin = it
+                                    Prefs.setCookiesEnabled(context, it)
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF141B29))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text(
+                                "🔗 Connect Instagram",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFFDDE4EF)
+                            )
+                            Text(
+                                "Log in once to download private posts, stories & some reels.",
+                                fontSize = 12.sp,
+                                color = Color(0xFF9AA6B8)
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "🔒 100% safe: Riplox never sees or stores your password. You sign in on Instagram's own page, and your login stays only on this phone — never on any server.",
+                                fontSize = 11.sp,
+                                color = Color(0xFF8FA6C4)
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Button(
+                                onClick = {
+                                    try {
+                                        context.startActivity(
+                                            Intent(context, CookieLoginActivity::class.java)
+                                                .putExtra("site", "instagram")
+                                                .putExtra("label", "Instagram")
+                                        )
+                                    } catch (_: Exception) {
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Connect Instagram") }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ---- Background-setup dialog (opens from both the banner and About) ----
@@ -939,6 +1012,313 @@ fun BgSetupDialog(onClose: () -> Unit) {
             }) { Text("Done") }
         }
     )
+}
+
+/** How many Downloaded rows show before "Show all". */
+private const val RECENT_PREVIEW = 5
+
+/** One running or waiting download, as the Downloading list draws it. */
+data class ActiveDl(
+    val id: java.util.UUID,
+    val title: String?,
+    val thumb: String?,
+    /** -1 = no number yet. */
+    val pct: Int,
+    /** ENQUEUED/BLOCKED — not running right this moment. */
+    val waiting: Boolean,
+    val retry: Boolean
+)
+
+/** What the list remembers about a job between WorkManager updates. */
+class ActiveMeta {
+    val seen = System.nanoTime()
+    var title: String? = null
+    var thumb: String? = null
+    var pct = -1
+    var attempt = 0
+}
+
+/**
+ * The jobs still in flight, newest first.
+ *
+ * ⚠️ WorkManager REPLACES a job's progress Data on every setProgress, and only one of the
+ * worker's updates carries the thumbnail (the title-only ones carry no percent). Read straight
+ * off each update, the picture would vanish at 1% and the bar would jump back to "Starting…"
+ * whenever a title update landed — so each job keeps the last value it saw. A retry starts the
+ * percent over, which is why it is reset when the attempt number changes.
+ */
+fun toActive(infos: List<WorkInfo>, meta: HashMap<java.util.UUID, ActiveMeta>): List<ActiveDl> {
+    val live = infos.filter {
+        it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED ||
+            it.state == WorkInfo.State.BLOCKED
+    }
+    meta.keys.retainAll(live.map { it.id }.toSet())
+    return live.map { wi ->
+        val m = meta.getOrPut(wi.id) { ActiveMeta() }
+        if (wi.runAttemptCount != m.attempt) {
+            m.attempt = wi.runAttemptCount
+            m.pct = -1
+        }
+        val p = wi.progress
+        // "Downloading…" is the worker's own placeholder until the real title arrives.
+        p.getString("title")?.takeIf { it.isNotBlank() && it != "Downloading…" }?.let { m.title = it }
+        p.getString("thumb")?.takeIf { it.isNotBlank() }?.let { m.thumb = it }
+        val pct = p.getInt("pct", -1)
+        if (pct >= 0) m.pct = pct
+        val waiting = wi.state != WorkInfo.State.RUNNING
+        m to ActiveDl(wi.id, m.title, m.thumb, if (waiting) -1 else m.pct, waiting, wi.runAttemptCount > 0)
+    }.sortedByDescending { it.first.seen }.map { it.second }
+}
+
+/** The three tabs under the link box. */
+enum class HomeTab { ACTIVE, DONE, FAILED }
+
+/**
+ * Downloading · Downloaded · Failed, as one segmented control.
+ *
+ * The count sits ABOVE each label instead of beside it: "Downloading" plus a count pill does not
+ * fit a third of a 360dp phone, and a clipped tab name is worse than a taller tab.
+ */
+@Composable
+private fun HomeTabs(selected: HomeTab, active: Int, done: Int, failed: Int, onSelect: (HomeTab) -> Unit) {
+    val accent = Accent.current(LocalContext.current)
+    val outer = RoundedCornerShape(14.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(outer)
+            .background(Color(0xFF0D121C))
+            .border(1.dp, Color(0xFF1D283B), outer)
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        listOf(
+            Triple(HomeTab.ACTIVE, "Downloading", active),
+            Triple(HomeTab.DONE, "Downloaded", done),
+            Triple(HomeTab.FAILED, "Failed", failed)
+        ).forEach { (t, label, n) ->
+            val on = t == selected
+            val cell = RoundedCornerShape(10.dp)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .clip(cell)
+                    .background(if (on) accent.primary.copy(alpha = 0.30f) else Color.Transparent)
+                    .border(1.dp, if (on) accent.primary else Color.Transparent, cell)
+                    .selectable(selected = on, role = Role.Tab, onClick = { onSelect(t) }),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    "$n",
+                    color = when {
+                        t == HomeTab.FAILED && n > 0 -> Color(0xFFE57373)
+                        on -> accent.onPrimary
+                        else -> Color(0xFFDDE4EF)
+                    },
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = SpaceGrotesk,
+                    maxLines = 1
+                )
+                Text(
+                    label,
+                    color = if (on) accent.onPrimary else Color(0xFF8592A6),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/** What an empty tab says. */
+@Composable
+private fun EmptyNote(text: String) {
+    Text(
+        text,
+        color = Color(0xFF5B6E8C),
+        fontSize = 13.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 28.dp)
+    )
+}
+
+/** One of the two format choices under the link box — Best quality video, or MP3. */
+@Composable
+private fun FormatOption(
+    label: String,
+    icon: ImageVector,
+    selected: Boolean,
+    accent: Accent,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(12.dp)
+    val fg = if (selected) accent.onPrimary else Color(0xFF9AA6B8)
+    Row(
+        modifier = modifier
+            .height(40.dp)
+            .clip(shape)
+            .background(if (selected) accent.primary.copy(alpha = 0.30f) else Color(0xFF0D121C))
+            .border(1.dp, if (selected) accent.primary else Color(0xFF1F2A3C), shape)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .padding(horizontal = 6.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        // One weight for both states, so the label never shifts when the choice changes.
+        Text(
+            label,
+            color = fg,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/**
+ * The third button beside Best quality / MP3: the Instagram account. A dot shows a live login —
+ * green while it works, amber once Instagram has expired it (the same states the old card spelled
+ * out, which the sheet still does).
+ */
+@Composable
+private fun InstagramButton(connected: Boolean, expired: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(12.dp)
+    Box(
+        modifier = Modifier
+            .size(width = 48.dp, height = 40.dp)
+            .clip(shape)
+            .background(Color(0xFF0D121C))
+            .border(1.dp, Color(0xFF1F2A3C), shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics {
+                contentDescription = when {
+                    !connected -> "Connect Instagram"
+                    expired -> "Instagram login expired"
+                    else -> "Instagram connected"
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        InstagramGlyph(22.dp)
+        if (connected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(5.dp)
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(if (expired) Color(0xFFE0A050) else Color(0xFF4CC38A))
+            )
+        }
+    }
+}
+
+/** The Instagram glyph — rounded square, lens, flash dot — in Instagram's own gradient. */
+@Composable
+private fun InstagramGlyph(size: Dp) {
+    val brush = Brush.linearGradient(
+        listOf(Color(0xFFFEDA75), Color(0xFFFA7E1E), Color(0xFFD62976), Color(0xFF962FBF), Color(0xFF4F5BD5)),
+        start = Offset(0f, Float.POSITIVE_INFINITY),
+        end = Offset(Float.POSITIVE_INFINITY, 0f)
+    )
+    Canvas(modifier = Modifier.size(size)) {
+        val w = this.size.width
+        val sw = w * 0.1f
+        drawRoundRect(
+            brush = brush,
+            topLeft = Offset(sw / 2, sw / 2),
+            size = Size(w - sw, w - sw),
+            cornerRadius = CornerRadius(w * 0.28f),
+            style = Stroke(width = sw)
+        )
+        drawCircle(brush = brush, radius = w * 0.22f, center = center, style = Stroke(width = sw))
+        drawCircle(brush = brush, radius = w * 0.065f, center = Offset(w * 0.76f, w * 0.24f))
+    }
+}
+
+/** A Downloading row: thumbnail, title, a live bar and what it is doing, and Cancel. */
+@Composable
+private fun ActiveRow(d: ActiveDl, onCancel: () -> Unit) {
+    val accent = Accent.current(LocalContext.current)
+    val bar = if (accent.id == 0) Color(0xFF8CA0BE) else accent.primary
+    val track = Color(0xFF1C2638)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF0E141F))
+            .padding(start = 8.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF151D2B)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Default.Download, contentDescription = null, tint = Color(0xFF5B6E8C), modifier = Modifier.size(20.dp))
+            if (!d.thumb.isNullOrBlank()) {
+                AsyncImage(
+                    model = d.thumb,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                d.title ?: "Getting post info…",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = Color(0xFFDDE4EF),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(Modifier.height(8.dp))
+            val barMod = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+            when {
+                // Waiting is not progress: an empty bar, not a moving one.
+                d.waiting -> LinearProgressIndicator(progress = { 0f }, modifier = barMod, color = bar, trackColor = track)
+                d.pct in 1..98 -> LinearProgressIndicator(progress = { d.pct / 100f }, modifier = barMod, color = bar, trackColor = track)
+                else -> LinearProgressIndicator(modifier = barMod, color = bar, trackColor = track)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                when {
+                    d.waiting && d.retry -> "Retrying soon…"
+                    d.waiting -> "Waiting to start…"
+                    d.pct < 0 -> "Starting…"
+                    // 100% means the transfer is done; the merge and the gallery save still follow.
+                    d.pct >= 99 -> "Finishing — merging & saving…"
+                    else -> "${d.pct}%"
+                },
+                color = Color(0xFF7D8BA0),
+                fontSize = 12.sp,
+                maxLines = 1
+            )
+        }
+        IconButton(onClick = onCancel) {
+            Icon(Icons.Default.Close, contentDescription = "Cancel download", tint = Color(0xFF9AA6B8))
+        }
+    }
 }
 
 /** "2m ago" style chhota time label. */

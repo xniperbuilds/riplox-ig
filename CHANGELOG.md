@@ -3,6 +3,23 @@
 All notable changes to Riplox IG are documented here.
 Versioning: **MAJOR.MINOR.PATCH** — new features bump MINOR, fixes bump PATCH.
 
+## [1.3.1] — 2026-11-11
+
+A cleaner home screen: the link box comes first, and every download has a place to live.
+
+### Changed
+- **The link box is at the top.** The large logo in the middle of the home screen is gone. The app's name sits small in the corner, and the box you paste into comes first.
+- **Best quality or MP3 — nothing else to pick.** The 1080p / 720p / 480p choices are gone. Videos now always save at the best quality the post offers; a lower setting chosen in an earlier version no longer applies.
+- **Instagram sits next to them.** Connecting, logging in again and the "use my login" switch moved from a card in the middle of the screen into a button beside Best quality and MP3. A small dot on it shows a working login (green) or one Instagram has expired (amber).
+- **Download appears once there is a link.** The button shows up as soon as a link is pasted or typed, and reads "Download MP3" when MP3 is chosen.
+- **Downloading · Downloaded · Failed tabs.** Under the link box, each tab shows its own count. A new download opens Downloading, with a live progress bar and a cancel button; when it finishes, the list moves on to Downloaded — or to Failed, if it did not work.
+- **A more compact layout.** Less space between things, so more of your downloads fit on one screen. Downloaded shows the newest five, with "Show all" for the rest.
+
+### Fixed
+- **Saved videos showed as empty dark squares on some phones.** Where a phone cannot draw a frame from the saved video, the row now shows a video icon instead of a blank box.
+- **Failed downloads cut their explanation off mid-sentence.** The whole message now shows.
+- **The "connect an account" advice pointed at a card that has moved.** It now says where the Instagram button is.
+
 ## [1.3.0] — 2026-10-20
 
 The share sheet stops crashing, shows you the post, and the app's own ads are rearranged around it.

@@ -301,7 +301,7 @@ fun smartError(context: Context, link: String, raw: String?): String {
     return if (isInstagramUrl(link) && !connected.contains("Instagram") &&
         looksLikeSessionFailure(raw)
     ) {
-        "Instagram blocks downloads without login.\nOpen Riplox IG → Connect Instagram (top of home) → retry. Your password never touches this app."
+        "Instagram blocks downloads without login.\nOpen Riplox IG → tap the Instagram button next to MP3 → Connect Instagram → retry. Your password never touches this app."
     } else {
         friendlyError(raw)
     }

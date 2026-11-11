@@ -66,8 +66,15 @@ android {
         //     built it on the main thread ("Window couldn't find content container view") — 2 of 4
         //     shares on a Huawei YAL-L21 before, 0 of 20 after. Riplox TT had this guard since 24 Sep.
         //   · A second share into an open sheet now resets it instead of showing the first job.
-        versionCode = 6
-        versionName = "1.3.0"
+        // v1.3.1 = the home screen redone around the link box.
+        //   · Link box first (the centre logo is gone). Format = Best quality | MP3 only, and
+        //     Prefs.quality() is always "best" now, so an old 480p choice cannot stick with no
+        //     control left to change it.
+        //   · The Instagram account is a third button beside them (opens a sheet), not a card.
+        //   · Download shows once there is a link; Downloading · Downloaded · Failed tabs below.
+        //   · Downloaded rows show a video icon where the phone cannot draw a frame from the file.
+        versionCode = 7
+        versionName = "1.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
